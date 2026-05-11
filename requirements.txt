@@ -1,0 +1,15 @@
+streamlit>=1.28.0
+requests>=2.31.0
+pandas>=2.0.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+python-dateutil>=2.8.2
+cloudscraper>=1.2.71
+selenium>=4.15.0
+undetected-chromedriver>=3.5.4
+PyPDF2>=3.0.0
+urllib3>=2.0.0
+html5lib>=1.1
+tabulate>=0.9.0
+python-docx>=1.1.0
+setuptools>=65.0.0
