@@ -41,39 +41,57 @@ st.markdown("""
         background-color: #00205B !important;
         color: white !important;
     }
-    .github-footer {
-        position: fixed;
-        right: 20px;
-        bottom: 20px;
-        background-color: rgba(255, 255, 255, 0.9);
-        padding: 8px 12px;
-        border-radius: 50px;
-        border: 1px solid #d0d7de;
-        z-index: 1000;
-        display: flex;
-        align-items: center;
-        font-family: 'Calibri', sans-serif;
-        text-decoration: none;
-        color: #24292f;
-        box-shadow: 0px 4px 12px rgba(0,0,0,0.1);
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .github-footer:hover {
-        transform: translateY(-2px);
-        box-shadow: 0px 6px 16px rgba(0,0,0,0.15);
-        color: #00205B;
-        border-color: #00205B;
-    }
-    .github-icon {
-        margin-right: 8px;
-        width: 22px;
-        height: 22px;
-    }
-    </style>
-    <a class="github-footer" href="https://github.com/sdiazprado" target="_blank">
+.github-footer {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    background-color: rgba(255, 255, 255, 0.9);
+    padding: 8px 12px;
+    border-radius: 50px;
+    border: 1px solid #d0d7de;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: 'Calibri', sans-serif;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.1);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.github-footer:hover {
+    transform: translateY(-2px);
+    box-shadow: 0px 6px 16px rgba(0,0,0,0.15);
+}
+.github-footer a {
+    text-decoration: none;
+    color: #24292f;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.2s;
+}
+.github-footer a:hover {
+    color: #00205B;
+}
+.github-icon {
+    width: 20px;
+    height: 20px;
+}
+.separator {
+    color: #d0d7de;
+    font-weight: normal;
+}
+</style>
+<div class="github-footer">
+    <a href="https://github.com/sdiazprado" target="_blank">
         <img class="github-icon" src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" alt="GitHub Logo">
         <span><strong>@sdiazprado</strong></span>
     </a>
+    <span class="separator">|</span>
+    <a href="https://github.com/barcevelasco" target="_blank">
+        <img class="github-icon" src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" alt="GitHub Logo">
+        <span><strong>@barcevelasco</strong></span>
+    </a>
+</div>
 """, unsafe_allow_html=True)
 
 # ==========================================
