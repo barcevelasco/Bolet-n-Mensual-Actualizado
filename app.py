@@ -2311,11 +2311,12 @@ def load_country_reports_elibrary(start_date_str, end_date_str):
 ## FMI - Publiccaciones Institucionales - INICIO
 
 ## FMI - F&D Magazine (CORREGIDO)
+## FMI - F&D Magazine (VERSIÓN CLOUDSCRAPER - SIN SELENIUM)
 @st.cache_data(show_spinner=False)
 def load_pub_inst_fandd(start_date_str, end_date_str):
     """
     Extrae ediciones completas de la revista F&D Magazine del FMI
-    AHORA CON: headers mejorados, redirectUrl, cloudscraper fallback
+    Usa cloudscraper + requests (sin Selenium) para evitar bloqueos
     """
     import requests
     import json
@@ -2323,9 +2324,10 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
     import datetime
     import pandas as pd
     from dateutil import parser
+    import time
 
     print("="*50)
-    print("📘 CARGANDO F&D MAGAZINE")
+    print("📘 CARGANDO F&D MAGAZINE (con cloudscraper)")
     print(f"   Fechas: {start_date_str} a {end_date_str}")
     print("="*50)
 
@@ -2340,7 +2342,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
 
     url = "https://www.imf.org/en/publications/fandd/issues"
     
-    # ========== HEADERS MEJORADOS ==========
+    # ========== HEADERS COMPLETOS ==========
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -2360,33 +2362,24 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
     try:
         print(f"   📡 Solicitando: {url}")
         
-        # ========== INTENTO 1: requests con headers ==========
-        res = requests.get(url, headers=headers, timeout=15)
-        print(f"   Status Code: {res.status_code}")
-        
-        # ========== SI DA 403, intentar con cloudscraper ==========
-        if res.status_code == 403:
-            print("   ⚠️ Bloqueado, intentando con cloudscraper...")
-            try:
-                import cloudscraper
-                scraper = cloudscraper.create_scraper(
-                    browser={
-                        'browser': 'chrome',
-                        'platform': 'windows',
-                        'mobile': False
-                    },
-                    delay=5
-                )
-                res = scraper.get(url, timeout=30)
-                print(f"   Status Code con cloudscraper: {res.status_code}")
-            except ImportError:
-                print("   ⚠️ cloudscraper no instalado, usando requests con más headers")
-                # ========== INTENTO 2: más headers ==========
-                headers2 = headers.copy()
-                headers2['Referer'] = 'https://www.imf.org/'
-                headers2['Origin'] = 'https://www.imf.org'
-                res = requests.get(url, headers=headers2, timeout=15)
-                print(f"   Status Code segundo intento: {res.status_code}")
+        # ========== INTENTAR CON CLOUDSCRAPER ==========
+        try:
+            import cloudscraper
+            print("   🔧 Usando cloudscraper...")
+            scraper = cloudscraper.create_scraper(
+                browser={
+                    'browser': 'chrome',
+                    'platform': 'windows',
+                    'mobile': False
+                },
+                delay=3
+            )
+            res = scraper.get(url, headers=headers, timeout=30)
+            print(f"   Status Code: {res.status_code}")
+        except ImportError:
+            print("   ⚠️ cloudscraper no instalado, usando requests normal...")
+            res = requests.get(url, headers=headers, timeout=15)
+            print(f"   Status Code: {res.status_code}")
         
         if res.status_code != 200:
             print(f"   ❌ Error al acceder: {res.status_code}")
@@ -2414,7 +2407,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
                     issue_list = comp_data['issueList']
                     if isinstance(issue_list, dict) and 'results' in issue_list:
                         results = issue_list['results']
-                        print(f"   ✅ Encontrados {len(results)} issues en componente: {comp_id}")
+                        print(f"   ✅ Encontrados {len(results)} issues")
                         break
         except Exception as e:
             print(f"   ⚠️ Error navegando: {e}")
@@ -2434,7 +2427,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
             issue_title = issue.get('issueTitle', {}).get('jsonValue', {}).get('value', '')
             issue_label = issue.get('issueLabel', {}).get('jsonValue', {}).get('value', '')
             
-            # ========== 🔧 CORRECCIÓN: Priorizar redirectUrl ==========
+            # ========== PRIORIZAR redirectUrl ==========
             redirect_url = issue.get('redirectUrl', {}).get('jsonValue', {}).get('value', {})
             if isinstance(redirect_url, dict):
                 issue_url = redirect_url.get('href', '')
@@ -2470,8 +2463,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
             
             titulo_final = f"F&D: {issue_label} - {title_clean}" if issue_label else f"F&D: {title_clean}"
             
-            # 🔍 Depuración: mostrar qué enlace se está usando
-            print(f"   📎 {issue_date.strftime('%Y-%m')}: URL = {issue_url[:80]}...")
+            print(f"   📎 {issue_date.strftime('%Y-%m')}: PDF = {issue_url[:80]}...")
             
             rows.append({
                 "Date": issue_date,
