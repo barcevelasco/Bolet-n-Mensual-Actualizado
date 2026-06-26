@@ -2310,11 +2310,12 @@ def load_country_reports_elibrary(start_date_str, end_date_str):
 
 ## FMI - Publiccaciones Institucionales - INICIO
 
-## FMI - F&D Magazine (inicio)
+## FMI - F&D Magazine (CORREGIDO)
 @st.cache_data(show_spinner=False)
 def load_pub_inst_fandd(start_date_str, end_date_str):
     """
     Extrae ediciones completas de la revista F&D Magazine del FMI
+    AHORA CON: headers mejorados, redirectUrl, cloudscraper fallback
     """
     import requests
     import json
@@ -2338,17 +2339,54 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         print(f"   ⚠️ Error en fechas, usando rango por defecto")
 
     url = "https://www.imf.org/en/publications/fandd/issues"
+    
+    # ========== HEADERS MEJORADOS ==========
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
     }
 
     rows = []
 
     try:
         print(f"   📡 Solicitando: {url}")
+        
+        # ========== INTENTO 1: requests con headers ==========
         res = requests.get(url, headers=headers, timeout=15)
         print(f"   Status Code: {res.status_code}")
+        
+        # ========== SI DA 403, intentar con cloudscraper ==========
+        if res.status_code == 403:
+            print("   ⚠️ Bloqueado, intentando con cloudscraper...")
+            try:
+                import cloudscraper
+                scraper = cloudscraper.create_scraper(
+                    browser={
+                        'browser': 'chrome',
+                        'platform': 'windows',
+                        'mobile': False
+                    },
+                    delay=5
+                )
+                res = scraper.get(url, timeout=30)
+                print(f"   Status Code con cloudscraper: {res.status_code}")
+            except ImportError:
+                print("   ⚠️ cloudscraper no instalado, usando requests con más headers")
+                # ========== INTENTO 2: más headers ==========
+                headers2 = headers.copy()
+                headers2['Referer'] = 'https://www.imf.org/'
+                headers2['Origin'] = 'https://www.imf.org'
+                res = requests.get(url, headers=headers2, timeout=15)
+                print(f"   Status Code segundo intento: {res.status_code}")
         
         if res.status_code != 200:
             print(f"   ❌ Error al acceder: {res.status_code}")
@@ -2367,7 +2405,6 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         # Buscar los issues
         results = []
         
-        # Ruta según el HTML que proporcionaste
         try:
             page_props = data.get('props', {}).get('pageProps', {})
             component_props = page_props.get('componentProps', {})
@@ -2396,10 +2433,19 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         for issue in results:
             issue_title = issue.get('issueTitle', {}).get('jsonValue', {}).get('value', '')
             issue_label = issue.get('issueLabel', {}).get('jsonValue', {}).get('value', '')
-            issue_url = issue.get('url', {}).get('url', '')
             
-            if not issue_url and issue.get('url', {}).get('path'):
-                issue_url = "https://www.imf.org" + issue.get('url', {}).get('path', '')
+            # ========== 🔧 CORRECCIÓN: Priorizar redirectUrl ==========
+            redirect_url = issue.get('redirectUrl', {}).get('jsonValue', {}).get('value', {})
+            if isinstance(redirect_url, dict):
+                issue_url = redirect_url.get('href', '')
+            else:
+                issue_url = redirect_url
+            
+            # Si no hay redirectUrl, usar el url de la página
+            if not issue_url:
+                issue_url = issue.get('url', {}).get('url', '')
+                if not issue_url and issue.get('url', {}).get('path'):
+                    issue_url = "https://www.imf.org" + issue.get('url', {}).get('path', '')
             
             fecha_texto = issue_label if issue_label else issue_title
             
@@ -2423,6 +2469,9 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
                 title_clean = fecha_texto
             
             titulo_final = f"F&D: {issue_label} - {title_clean}" if issue_label else f"F&D: {title_clean}"
+            
+            # 🔍 Depuración: mostrar qué enlace se está usando
+            print(f"   📎 {issue_date.strftime('%Y-%m')}: URL = {issue_url[:80]}...")
             
             rows.append({
                 "Date": issue_date,
