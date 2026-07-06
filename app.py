@@ -2536,7 +2536,8 @@ def load_country_reports_elibrary(start_date_str, end_date_str):
 
 ## FMI - Publiccaciones Institucionales - INICIO
 
-## FMI - F&D Magazine (inicio)
+## FMI - F&D Magazine (CORREGIDO)
+## FMI - F&D Magazine (VERSIÓN CLOUDSCRAPER - SIN SELENIUM)
 @st.cache_data(show_spinner=False)
 def load_pub_inst_fandd(start_date_str, end_date_str):
     """
@@ -2549,9 +2550,10 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
     import datetime
     import pandas as pd
     from dateutil import parser
+    import time
 
     print("="*50)
-    print("📘 CARGANDO F&D MAGAZINE")
+    print("📘 CARGANDO F&D MAGAZINE (con cloudscraper)")
     print(f"   Fechas: {start_date_str} a {end_date_str}")
     print("="*50)
 
@@ -2565,17 +2567,45 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         print(f"   ⚠️ Error en fechas, usando rango por defecto")
 
     url = "https://www.imf.org/en/publications/fandd/issues"
+    
+    # ========== HEADERS COMPLETOS ==========
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
     }
 
     rows = []
 
     try:
         print(f"   📡 Solicitando: {url}")
-        res = requests.get(url, headers=headers, timeout=15)
-        print(f"   Status Code: {res.status_code}")
+        
+        # ========== INTENTAR CON CLOUDSCRAPER ==========
+        try:
+            import cloudscraper
+            print("   🔧 Usando cloudscraper...")
+            scraper = cloudscraper.create_scraper(
+                browser={
+                    'browser': 'chrome',
+                    'platform': 'windows',
+                    'mobile': False
+                },
+                delay=3
+            )
+            res = scraper.get(url, headers=headers, timeout=30)
+            print(f"   Status Code: {res.status_code}")
+        except ImportError:
+            print("   ⚠️ cloudscraper no instalado, usando requests normal...")
+            res = requests.get(url, headers=headers, timeout=15)
+            print(f"   Status Code: {res.status_code}")
         
         if res.status_code != 200:
             print(f"   ❌ Error al acceder: {res.status_code}")
@@ -2603,7 +2633,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
                     issue_list = comp_data['issueList']
                     if isinstance(issue_list, dict) and 'results' in issue_list:
                         results = issue_list['results']
-                        print(f"   ✅ Encontrados {len(results)} issues en componente: {comp_id}")
+                        print(f"   ✅ Encontrados {len(results)} issues")
                         break
         except Exception as e:
             print(f"   ⚠️ Error navegando: {e}")
