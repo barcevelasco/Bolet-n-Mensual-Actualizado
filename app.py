@@ -20,6 +20,232 @@ import cloudscraper  # Para bypass de Cloudflare en BID
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ==========================================
+# MAPEO DE FUENTES ORIGINALES PARA AUDITORÍA (CON ENLACES)
+# ==========================================
+
+FUENTES_FMI = {
+    # === PUBLICACIONES INSTITUCIONALES (8 ENLACES) ===
+    "F&D Magazine": {
+        "nombre": "F&D Magazine",
+        "origen": "JSON Next.js",
+        "url": "https://www.imf.org/en/publications/fandd/issues",
+        "enlace_id": 1
+    },
+    "Fiscal Monitor": {
+        "nombre": "Fiscal Monitor",
+        "origen": "JSON Next.js",
+        "url": "https://www.imf.org/en/publications/fm",
+        "enlace_id": 2
+    },
+    "Global Financial Stability Report": {
+        "nombre": "Global Financial Stability Report",
+        "origen": "JSON Next.js",
+        "url": "https://www.imf.org/en/publications/gfsr",
+        "enlace_id": 3
+    },
+    "IMF Annual Report": {
+        "nombre": "IMF Annual Report",
+        "origen": "JSON Next.js",
+        "url": "https://www.imf.org/en/publications/areb",
+        "enlace_id": 4
+    },
+    "Regional Economic Outlook": {
+        "nombre": "Regional Economic Outlook",
+        "origen": "JSON Next.js",
+        "url": "https://www.imf.org/en/publications/reo",
+        "enlace_id": 5
+    },
+    "World Economic Outlook": {
+        "nombre": "World Economic Outlook",
+        "origen": "JSON Next.js",
+        "url": "https://www.imf.org/en/publications/weo",
+        "enlace_id": 6
+    },
+    "Press Releases": {
+        "nombre": "Press Releases",
+        "origen": "API Coveo",
+        "url": "https://www.imf.org/en/news/searchnews#sortCriteria=%40imfdate%20descending&cf-type=PRESSRES&df-date=past-3-month..now",
+        "enlace_id": 7
+    },
+    "Country Reports (Article IV)": {
+        "nombre": "Country Reports (Article IV)",
+        "origen": "API Coveo",
+        "url": "https://www.imf.org/en/search#sortCriteria=%40imfdate%20descending&cf-type=PUBS,COUNTRYREPS,ARTICLE4",
+        "enlace_id": 8
+    },
+    
+    # === INVESTIGACIÓN (NO son Publicaciones Institucionales) ===
+    "Working Papers": {
+        "nombre": "Working Papers",
+        "origen": "Crossref API",
+        "url": "https://www.imf.org/en/Publications/SPROLLs/working-papers",
+        "enlace_id": "Inv-1"
+    },
+    "Blogs": {
+        "nombre": "Blogs",
+        "origen": "API Coveo",
+        "url": "https://www.imf.org/en/Blogs",
+        "enlace_id": "Inv-2"
+    },
+    
+    # === DISCURSOS (NO son Publicaciones Institucionales) ===
+    "Speeches": {
+        "nombre": "Speeches",
+        "origen": "API Coveo",
+        "url": "https://www.imf.org/en/News/Speeches",
+        "enlace_id": "Disc-1"
+    },
+}
+
+def identificar_fuente_fmi(row):
+    """
+    Identifica la fuente original de un documento del FMI
+    basado en su título y categoría.
+    """
+    titulo = row.get('Title', '')
+    categoria = row.get('Categoría', '')
+    organismo = row.get('Organismo', '')
+    
+    # Solo procesar FMI
+    if organismo != 'FMI':
+        return {
+            "nombre": "No aplica",
+            "origen": "No aplica",
+            "url": "",
+            "enlace_id": "N/A"
+        }
+    
+    # === PUBLICACIONES INSTITUCIONALES ===
+    if categoria == 'Publicaciones Institucionales':
+        # Enlace 1: F&D Magazine
+        if 'F&D' in titulo or 'Finance & Development' in titulo:
+            return {
+                "nombre": "F&D Magazine",
+                "origen": "JSON Next.js",
+                "url": "https://www.imf.org/en/publications/fandd/issues",
+                "enlace_id": "1"
+            }
+        # Enlace 2: Fiscal Monitor
+        elif 'Fiscal Monitor' in titulo:
+            return {
+                "nombre": "Fiscal Monitor",
+                "origen": "JSON Next.js",
+                "url": "https://www.imf.org/en/publications/fm",
+                "enlace_id": "2"
+            }
+        # Enlace 3: Global Financial Stability Report
+        elif 'Global Financial Stability' in titulo or 'GFSR' in titulo:
+            return {
+                "nombre": "Global Financial Stability Report",
+                "origen": "JSON Next.js",
+                "url": "https://www.imf.org/en/publications/gfsr",
+                "enlace_id": "3"
+            }
+        # Enlace 4: IMF Annual Report
+        elif 'Annual Report' in titulo and 'IMF' in titulo:
+            return {
+                "nombre": "IMF Annual Report",
+                "origen": "JSON Next.js",
+                "url": "https://www.imf.org/en/publications/areb",
+                "enlace_id": "4"
+            }
+        # Enlace 5: Regional Economic Outlook
+        elif 'Regional Economic Outlook' in titulo or 'REO' in titulo:
+            return {
+                "nombre": "Regional Economic Outlook",
+                "origen": "JSON Next.js",
+                "url": "https://www.imf.org/en/publications/reo",
+                "enlace_id": "5"
+            }
+        # Enlace 6: World Economic Outlook
+        elif 'World Economic Outlook' in titulo or 'WEO' in titulo:
+            return {
+                "nombre": "World Economic Outlook",
+                "origen": "JSON Next.js",
+                "url": "https://www.imf.org/en/publications/weo",
+                "enlace_id": "6"
+            }
+        # Enlace 7: Press Releases
+        elif 'Press Release' in titulo or 'IMF Staff Completes' in titulo or 'IMF Reaches' in titulo:
+            return {
+                "nombre": "Press Releases",
+                "origen": "API Coveo",
+                "url": "https://www.imf.org/en/news/searchnews#sortCriteria=%40imfdate%20descending&cf-type=PRESSRES&df-date=past-3-month..now",
+                "enlace_id": "7"
+            }
+        # Enlace 8: Country Reports (Article IV) y Mission Concluding
+        elif 'Article IV' in titulo or 'Staff Report' in titulo:
+            return {
+                "nombre": "Country Reports (Article IV)",
+                "origen": "API Coveo",
+                "url": "https://www.imf.org/en/search#sortCriteria=%40imfdate%20descending&cf-type=PUBS,COUNTRYREPS,ARTICLE4",
+                "enlace_id": "8"
+            }
+        elif 'Concluding Statement' in titulo or 'Mission Concluding' in titulo:
+            return {
+                "nombre": "Mission Concluding",
+                "origen": "API Coveo",
+                "url": "https://www.imf.org/en/search#sortCriteria=%40imfdate%20descending&cf-type=PUBS,COUNTRYREPS,ARTICLE4",
+                "enlace_id": "8"  # Mismo ID que Country Reports
+            }
+        # Si no se identifica
+        else:
+            return {
+                "nombre": "No identificado",
+                "origen": "Desconocido",
+                "url": "",
+                "enlace_id": "No-ID"
+            }
+    
+    # === INVESTIGACIÓN ===
+    elif categoria == 'Investigación':
+        if 'Working Paper' in titulo or 'WP/' in titulo:
+            return {
+                "nombre": "Working Papers",
+                "origen": "Crossref API",
+                "url": "https://www.imf.org/en/Publications/SPROLLs/working-papers",
+                "enlace_id": "Inv-1"
+            }
+        elif 'Blog' in titulo or 'blogs' in str(row.get('Link', '')).lower():
+            return {
+                "nombre": "Blogs",
+                "origen": "API Coveo",
+                "url": "https://www.imf.org/en/Blogs",
+                "enlace_id": "Inv-2"
+            }
+        else:
+            return {
+                "nombre": "Investigación FMI",
+                "origen": "Crossref API",
+                "url": "https://www.imf.org/en/Research",
+                "enlace_id": "Inv-Other"
+            }
+    
+    # === DISCURSOS ===
+    elif categoria == 'Discursos':
+        if 'Speech' in titulo or 'Transcript' in titulo or 'Remarks' in titulo:
+            return {
+                "nombre": "Speeches",
+                "origen": "API Coveo",
+                "url": "https://www.imf.org/en/News/Speeches",
+                "enlace_id": "Disc-1"
+            }
+        else:
+            return {
+                "nombre": "Discursos FMI",
+                "origen": "API Coveo",
+                "url": "https://www.imf.org/en/News/Speeches",
+                "enlace_id": "Disc-Other"
+            }
+    
+    # Default
+    return {
+        "nombre": "Otra fuente",
+        "origen": "No identificado",
+        "url": "",
+        "enlace_id": "N/A"
+    }
 
 # ==========================================
 # CONFIGURACIÓN INICIAL Y ESTILOS
@@ -2315,6 +2541,7 @@ def load_country_reports_elibrary(start_date_str, end_date_str):
 def load_pub_inst_fandd(start_date_str, end_date_str):
     """
     Extrae ediciones completas de la revista F&D Magazine del FMI
+    Ahora prioriza el enlace directo al PDF (redirectUrl)
     """
     import requests
     import json
@@ -2367,7 +2594,6 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         # Buscar los issues
         results = []
         
-        # Ruta según el HTML que proporcionaste
         try:
             page_props = data.get('props', {}).get('pageProps', {})
             component_props = page_props.get('componentProps', {})
@@ -2396,10 +2622,19 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         for issue in results:
             issue_title = issue.get('issueTitle', {}).get('jsonValue', {}).get('value', '')
             issue_label = issue.get('issueLabel', {}).get('jsonValue', {}).get('value', '')
-            issue_url = issue.get('url', {}).get('url', '')
             
-            if not issue_url and issue.get('url', {}).get('path'):
-                issue_url = "https://www.imf.org" + issue.get('url', {}).get('path', '')
+            # ========== 🔧 CORRECCIÓN: Priorizar redirectUrl ==========
+            redirect_url = issue.get('redirectUrl', {}).get('jsonValue', {}).get('value', {})
+            if isinstance(redirect_url, dict):
+                issue_url = redirect_url.get('href', '')
+            else:
+                issue_url = redirect_url
+            
+            # Si no hay redirectUrl, usar el url de la página
+            if not issue_url:
+                issue_url = issue.get('url', {}).get('url', '')
+                if not issue_url and issue.get('url', {}).get('path'):
+                    issue_url = "https://www.imf.org" + issue.get('url', {}).get('path', '')
             
             fecha_texto = issue_label if issue_label else issue_title
             
@@ -2424,6 +2659,9 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
             
             titulo_final = f"F&D: {issue_label} - {title_clean}" if issue_label else f"F&D: {title_clean}"
             
+            # 🔍 Depuración: mostrar qué enlace se está usando
+            print(f"   📎 {issue_date.strftime('%Y-%m')}: URL = {issue_url[:80]}...")
+            
             rows.append({
                 "Date": issue_date,
                 "Title": titulo_final,
@@ -2437,7 +2675,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         import traceback
         traceback.print_exc()
         return pd.DataFrame()
-
+    
     df = pd.DataFrame(rows)
     if not df.empty:
         df["Date"] = pd.to_datetime(df["Date"])
@@ -3490,10 +3728,26 @@ def load_investigacion_bm(start_date_str, end_date_str):
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        df["Date"] = pd.to_datetime(df["Date"])
+        # 🔧 1. Convertir a datetime y FORZAR eliminación de timezone
+        df["Date"] = pd.to_datetime(df["Date"], errors='coerce', utc=False)
         if df["Date"].dt.tz is not None:
-            df["Date"] = df["Date"].dt.tz_convert(None)
+            df["Date"] = df["Date"].dt.tz_localize(None)
+        
+        # 🔧 2. Eliminar filas con fecha inválida
+        df = df.dropna(subset=['Date'])
+        
+        # 🔧 3. Eliminar duplicados por Link (importante)
+        df = df.drop_duplicates(subset=['Link'])
+        
+        # 🔧 4. Ordenar por fecha descendente
         df = df.sort_values("Date", ascending=False)
+        
+        # 🔧 5. DEPURACIÓN (opcional, pero ayuda a detectar problemas)
+        print(f"📊 BM Investigación - Total después de limpieza: {len(df)}")
+        if not df.empty:
+            print(f"   📅 Meses en los datos: {sorted(df['Date'].dt.month.unique())}")
+            print(f"   📅 Años en los datos: {sorted(df['Date'].dt.year.unique())}")
+    
     return df
 
 ## OCDE - INVESTIGACION
@@ -6156,6 +6410,102 @@ def generate_word(df, title="Boletín Mensual", subtitle=""):
     out.seek(0)
     return out
 
+## FUNCIÓN DE WORD AUDITADO 
+
+def generate_word_auditado(df, title="Boletín Mensual", subtitle=""):
+    """
+    Genera un Word con auditoría de fuentes.
+    Incluye: ID Enlace, Nombre de la Fuente, Origen, Título con hipervínculo,
+    y agrupa los documentos por su fuente original.
+    """
+    from docx import Document
+    from docx.shared import Pt, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    import docx
+    
+    doc = Document()
+    
+    # Configurar márgenes más amplios para mejor visualización
+    for section in doc.sections:
+        section.left_margin = Inches(0.5)
+        section.right_margin = Inches(0.5)
+    
+    # Título
+    h = doc.add_heading(title, 0)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    if subtitle:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(subtitle)
+        run.font.name, run.font.size = 'Calibri', Pt(14)
+    doc.add_paragraph()
+    
+    # ========== CORRECCIÓN: Usar 'Fecha' en lugar de 'Date' ==========
+    # Verificar qué columnas existen
+    columnas_disponibles = df.columns.tolist()
+    print(f"📋 Columnas disponibles en df_word: {columnas_disponibles}")
+    
+    # Usar 'Fecha' si existe, o 'Date' si no
+    columna_fecha = 'Fecha' if 'Fecha' in columnas_disponibles else 'Date'
+    
+    # Ordenar por categoría, organismo, fuente y fecha
+    df = df.sort_values(['Categoría', 'Organismo', 'Nombre Fuente', columna_fecha], 
+                        ascending=[True, True, True, False])
+    
+    # Agrupar por fuente original
+    for (categoria, organismo, nombre_fuente, id_enlace, origen), group in df.groupby(
+        ['Categoría', 'Organismo', 'Nombre Fuente', 'ID Enlace', 'Origen']
+    ):
+        # Título de la sección
+        p = doc.add_paragraph()
+        run = p.add_run(f"{categoria} | {organismo} | {id_enlace}")
+        run.bold = True
+        run.font.name = 'Calibri'
+        run.font.size = Pt(14)
+        run.font.color.rgb = docx.shared.RGBColor(0, 32, 91)  # Azul oscuro
+        
+        p = doc.add_paragraph()
+        run = p.add_run(f"Fuente: {nombre_fuente} (Origen: {origen})")
+        run.bold = True
+        run.font.name = 'Calibri'
+        run.font.size = Pt(11)
+        run.italic = True
+        
+        # Lista de documentos bajo esta fuente
+        for _, row in group.iterrows():
+            p = doc.add_paragraph(style='List Bullet')
+            titulo = str(row.get('Nombre de Documento', ''))  # ← USAR 'Nombre de Documento'
+            link = str(row.get('Enlace', ''))                 # ← USAR 'Enlace'
+            
+            # ========== CORRECCIÓN: Usar 'Fecha' o 'Date' ==========
+            fecha = row.get(columna_fecha, '')
+            
+            # Formatear fecha
+            if hasattr(fecha, 'strftime'):
+                fecha_str = fecha.strftime('%d/%m/%Y')
+            else:
+                fecha_str = str(fecha)
+            
+            # Agregar el título con hipervínculo
+            if link and link.startswith('http'):
+                # Primero agregamos la fecha
+                run = p.add_run(f"{fecha_str} - ")
+                run.font.name = 'Calibri'
+                run.font.size = Pt(11)
+                
+                # Luego el título con hipervínculo
+                add_hyperlink(p, titulo, link)
+            else:
+                run = p.add_run(f"{fecha_str} - {titulo}")
+                run.font.name = 'Calibri'
+                run.font.size = Pt(11)
+        
+        doc.add_paragraph()  # Espacio entre secciones
+    
+    out = BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out
 
 # ==========================================
 # INTERFAZ DE USUARIO Y MAIN
@@ -6182,7 +6532,7 @@ meses_dict = {
 # --- LISTAS DINÁMICAS DE ORGANISMOS ---
 orgs_discursos = ["BBk (Alemania)", "BdE (España)", "BdF (Francia)", "BM", "BoC (Canadá)", "BoE (Inglaterra)", "BoJ (Japón)", "BPI", "CEF", "ECB (Europa)", "Fed (Estados Unidos)", "FMI", "PBoC (China)"]
 orgs_reportes = ["BID", "BM", "BPI", "CEF", "FEM", "OCDE"]
-orgs_pub_inst = ["BM", "BPI", "CEF", "CEMLA", "FMI", "FMI (Mission Concluding)", "F&D", "G20", "OCDE", "OEI", "F&D Magazine"]
+orgs_pub_inst = ["BM", "BPI", "CEF", "CEMLA", "FMI", "F&D", "G20", "OCDE", "OEI", "F&D Magazine"]
 orgs_investigacion = ["BID", "BM", "BPI", "CEMLA", "FMI", "OCDE"]
 
 st.sidebar.markdown("---")
@@ -6339,17 +6689,19 @@ if modo_app == "Boletín":
                         print(f"📊 FMI - Press Releases: {len(df_prs)} documentos")
 
                         # 3. CSR API - Coveo (Country Reports)
-                        df_crs = load_country_reports_fmi(sd, ed)  # <-- LA NUEVA API
+                        df_crs = load_country_reports_fmi(sd, ed)
                         print(f"📊 FMI - Country Reports: {len(df_crs)} documentos")
 
-                        # Unión
-                        dfs_a_unir = [d for d in [df_flagships, df_prs, df_crs] if not d.empty]
+                        # 4. NUEVO: Mission Concluding (de load_fmi_news_all)
+                        df_mcs = load_fmi_news_all(sd, ed)
+                        print(f"📊 FMI - Mission Concluding: {len(df_mcs)} documentos")
+
+                        # Unión de todos
+                        dfs_a_unir = [d for d in [df_flagships, df_prs, df_crs, df_mcs] if not d.empty]
                         if dfs_a_unir:
                             df = pd.concat(dfs_a_unir, ignore_index=True)
                             df = df.sort_values("Date", ascending=False)
                             print(f"📊 FMI - TOTAL combinado: {len(df)} documentos")
-                    elif org == "FMI (Mission Concluding)": 
-                        df = load_fmi_news_all(sd, ed)
                     elif org == "G20":  
                         df = load_pub_inst_g20(sd, ed)
                 except Exception as e:
@@ -6550,6 +6902,370 @@ if modo_app == "Boletín":
             else:
                 st.warning(
                     "No se encontraron documentos para los criterios seleccionados.")
+
+    # ==========================================
+    # BOTÓN 2: CON AUDITORÍA
+    # ==========================================
+    if st.button("🔍 Generar Boletín con Auditoría", type="secondary"):
+        if not m_sel or not a_sel:
+            st.warning("⚠️ Selecciona mes y año.")
+        else:
+            with st.spinner("Generando boletín con auditoría..."):
+                m_num = [meses_dict[m] for m in m_sel]
+                a_num = [int(a) for a in a_sel]
+                sd = f"01.{min(m_num):02d}.{min(a_num)}"
+                ed = f"{calendar.monthrange(max(a_num), max(m_num))[1]:02d}.{max(m_num):02d}.{max(a_num)}"
+
+                all_dfs = []
+                
+                                # ===== CÓDIGO DE EXTRACCIÓN COPIADO DEL BOTÓN 1 =====
+                # (copias TODO desde "prog = st.progress(0)" hasta "txt.empty()")
+                prog = st.progress(0)
+                txt = st.empty()
+                
+                total_pasos = len(orgs_discursos) + len(orgs_reportes) + \
+                    len(orgs_pub_inst) + len(orgs_investigacion)
+                paso_actual = 0
+                
+                # 1. BARRIDO DE DISCURSOS
+                for org in orgs_discursos:
+                    txt.text(f"Procesando Discursos: {org}...")
+                    df = pd.DataFrame()
+                    try:
+                        if org == "BPI":
+                            df = load_data_bis(
+                                use_event_date=use_event_date_bis,
+                                target_year=a_num[0] if a_num else None,
+                                target_month=m_num[0] if m_num else None
+                            )
+                        elif org == "ECB (Europa)":
+                            df = load_data_ecb(sd, ed)
+                        elif org == "FMI":
+                            df = load_discursos_fmi(sd, ed)
+                        elif org == "BBk (Alemania)":
+                            df = load_data_bbk(sd, ed)
+                        elif org == "Fed (Estados Unidos)":
+                            df = load_data_fed(a_num)
+                        elif org == "BdF (Francia)":
+                            df = load_data_bdf(sd, ed)
+                        elif org == "BM":
+                            df = load_data_bm(sd, ed)
+                        elif org == "BoC (Canadá)":
+                            df = load_data_boc(sd, ed)
+                        elif org == "BoJ (Japón)":
+                            df = load_data_boj(sd, ed)
+                        elif org == "BoE (Inglaterra)":
+                            df = load_discursos_boe(sd, ed)
+                        elif org == "CEF":
+                            df = load_data_cef(sd, ed)
+                        elif org == "PBoC (China)":
+                            df = load_data_pboc(sd, ed)
+                        elif org == "BdE (España)":
+                            df = load_data_bde(sd, ed)
+                    except Exception as e:
+                        print(f"❌ Error en {org}: {e}")
+                        pass
+                    
+                    if not df.empty:
+                        df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+                        df_f = df[(df["Date"].dt.year.isin(a_num)) & (df["Date"].dt.month.isin(m_num))].copy()
+                        if not df_f.empty:
+                            df_f['Organismo'] = org
+                            df_f['Categoría'] = "Discursos"
+                            all_dfs.append(df_f)
+                    paso_actual += 1
+                    prog.progress(paso_actual / total_pasos)
+                
+                # 2. BARRIDO DE REPORTES
+                for org in orgs_reportes:
+                    txt.text(f"Procesando Reportes: {org}...")
+                    df = pd.DataFrame()
+                    try:
+                        if org == "BID":
+                            df = load_reportes_bid_en(sd, ed)
+                        elif org == "BM":
+                            df = load_reportes_bm(sd, ed)
+                        elif org == "BPI":
+                            df = load_reportes_bpi(sd, ed)
+                        elif org == "CEF":
+                            df = load_reportes_cef(sd, ed)
+                        elif org == "OCDE":
+                            df = load_reportes_ocde(sd, ed)
+                        elif org == "FEM":
+                            df = load_reportes_fem(sd, ed)
+                    except Exception as e:
+                        pass
+                    
+                    if not df.empty:
+                        df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+                        df_f = df[(df["Date"].dt.year.isin(a_num)) & (df["Date"].dt.month.isin(m_num))].copy()
+                        if not df_f.empty:
+                            df_f['Organismo'] = org
+                            df_f['Categoría'] = "Reportes"
+                            all_dfs.append(df_f)
+                    paso_actual += 1
+                    prog.progress(paso_actual / total_pasos)
+                
+                # 3. BARRIDO DE PUBLICACIONES INSTITUCIONALES
+                for org in orgs_pub_inst:
+                    txt.text(f"Procesando Pub. Institucionales: {org}...")
+                    df = pd.DataFrame()
+                    try:
+                        if org == "BPI":
+                            df = load_pub_inst_bpi(sd, ed)
+                        elif org == "CEF":
+                            df = load_pub_inst_cef(sd, ed)
+                        elif org == "BM":
+                            df = load_pub_inst_bm(sd, ed)
+                        elif org == "OEI":
+                            df = load_pub_inst_oei(sd, ed)
+                        elif org == "OCDE":
+                            df = load_pub_inst_ocde(sd, ed)
+                        elif org == "F&D":
+                            df = load_pub_inst_fandd(sd, ed)
+                        elif org == "CEMLA":
+                            df = load_pub_inst_cemla(sd, ed)
+                        elif org == "FMI":
+                            df_flagships = load_pub_inst_fmi(sd, ed)
+                            df_prs = load_press_releases_fmi(sd, ed)
+                            df_crs = load_country_reports_fmi(sd, ed)
+                            df_mcs = load_fmi_news_all(sd, ed)  # NUEVO
+                            dfs_a_unir = [d for d in [df_flagships, df_prs, df_crs, df_mcs] if not d.empty]
+                            if dfs_a_unir:
+                                df = pd.concat(dfs_a_unir, ignore_index=True)
+                                df = df.sort_values("Date", ascending=False)
+                        elif org == "G20":
+                            df = load_pub_inst_g20(sd, ed)
+                    except Exception as e:
+                        print(f"Error en {org}: {e}")
+                    
+                    if not df.empty:
+                        df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+                        df_f = df[(df["Date"].dt.year.isin(a_num)) & (df["Date"].dt.month.isin(m_num))].copy()
+                        if not df_f.empty:
+                            df_f['Organismo'] = org
+                            df_f['Categoría'] = "Publicaciones Institucionales"
+                            all_dfs.append(df_f)
+                    paso_actual += 1
+                    prog.progress(paso_actual / total_pasos)
+                
+                # 4. BARRIDO DE INVESTIGACIÓN
+                for org in orgs_investigacion:
+                    txt.text(f"Procesando Investigación: {org}...")
+                    df = pd.DataFrame()
+                    try:
+                        if org == "BID":
+                            df = load_investigacion_bid_unified(sd, ed)
+                        elif org == "BPI":
+                            df = load_investigacion_bpi(sd, ed)
+                        elif org == "BM":
+                            df = load_investigacion_bm(sd, ed)
+                        elif org == "CEMLA":
+                            df = load_investigacion_cemla(sd, ed)
+                        elif org == "FMI":
+                            df_blogs = pd.DataFrame()
+                            df_wp = pd.DataFrame()
+                            try:
+                                df_blogs = load_investigacion_fmi(sd, ed)
+                            except:
+                                pass
+                            try:
+                                df_wp = load_working_papers_fmi(sd, ed)
+                            except:
+                                pass
+                            dfs_a_unir = [d for d in [df_blogs, df_wp] if not d.empty]
+                            if dfs_a_unir:
+                                df = pd.concat(dfs_a_unir, ignore_index=True)
+                                df = df.drop_duplicates(subset=['Link'])
+                                df = df.sort_values("Date", ascending=False)
+                        elif org == "OCDE":
+                            df = load_investigacion_ocde(sd, ed)
+                    except Exception as e:
+                        print(f"⚠️ Error general en {org}: {e}")
+                        pass
+                    
+                    if not df.empty:
+                        df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+                        df_f = df[(df["Date"].dt.year.isin(a_num)) & (df["Date"].dt.month.isin(m_num))].copy()
+                        if not df_f.empty:
+                            df_f['Organismo'] = org
+                            df_f['Categoría'] = "Investigación"
+                            all_dfs.append(df_f)
+                    paso_actual += 1
+                    prog.progress(paso_actual / total_pasos)
+                
+                # --- INYECCIÓN DE TEXTO MANUAL ---
+                if 'df_extra' in st.session_state and not st.session_state.df_extra.empty:
+                    all_dfs.append(st.session_state.df_extra)
+                    txt.text("Inyectando reportes manuales...")
+                
+                txt.empty()
+                prog.empty()
+                # ===== FIN DEL CÓDIGO DE EXTRACCIÓN COPIADO =====
+                
+                # ===== CONSOLIDACIÓN CON AUDITORÍA =====
+                if all_dfs:
+                    f_df = pd.concat(all_dfs, ignore_index=True)
+                    
+                    # Eliminar duplicados
+                    f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
+                    
+                    # Añadir auditoría para FMI
+                    def obtener_fuente(row):
+                        if row['Organismo'] == 'FMI':
+                            return identificar_fuente_fmi(row)
+                        else:
+                            return {"nombre": "No aplica", "origen": "No aplica", "url": "", "enlace_id": "N/A"}
+                    
+                    fuentes = f_df.apply(obtener_fuente, axis=1)
+                    f_df['Nombre Fuente'] = fuentes.apply(lambda x: x['nombre'])
+                    f_df['Origen'] = fuentes.apply(lambda x: x['origen'])
+                    f_df['URL Fuente'] = fuentes.apply(lambda x: x['url'])
+                    
+                    # ===== PASO 3: AGREGAR ENLACE ID =====
+                    f_df['Enlace ID'] = fuentes.apply(lambda x: x.get('enlace_id', 'N/A'))
+                    # ===== FIN PASO 3 =====
+                    
+                    # ===== NUEVA NUMERACIÓN DE ENLACES (CORRECTA) =====
+                    # Numerar enlaces por fuente original (usando el NOMBRE de la fuente)
+
+                    # Crear un DataFrame con los grupos únicos
+                    grupos_unicos = f_df[['Categoría', 'Organismo', 'Nombre Fuente']].drop_duplicates()
+                    grupos_unicos = grupos_unicos.sort_values(['Categoría', 'Organismo', 'Nombre Fuente'])
+
+                    # Asignar un número secuencial a cada grupo DENTRO DE CADA CATEGORÍA Y ORGANISMO
+                    grupos_unicos['Grupo Fuente'] = grupos_unicos.groupby(['Categoría', 'Organismo']).cumcount() + 1
+                    grupos_unicos['Total Fuentes'] = grupos_unicos.groupby(['Categoría', 'Organismo'])['Grupo Fuente'].transform('max')
+
+                    # Unir de vuelta al DataFrame principal
+                    f_df = f_df.merge(
+                        grupos_unicos[['Categoría', 'Organismo', 'Nombre Fuente', 'Grupo Fuente', 'Total Fuentes']],
+                        on=['Categoría', 'Organismo', 'Nombre Fuente'],
+                        how='left'
+                    )
+
+                    # Crear el ID de enlace
+                    f_df['ID Enlace'] = f_df.apply(
+                        lambda row: f"Enlace {row['Grupo Fuente']} de {row['Total Fuentes']} ({row['Organismo']} - {row['Categoría']})",
+                        axis=1
+                    )
+                    # ===== FIN NUEVA NUMERACIÓN =====
+                    
+                    # Preparar DataFrame para Word
+                    df_word = f_df[['Categoría', 'Organismo', 'ID Enlace', 'Nombre Fuente', 'Origen', 'Enlace ID', 'Date', 'Title', 'Link']].copy()
+                    df_word = df_word.rename(columns={
+                        'Date': 'Fecha',
+                        'Title': 'Nombre de Documento',
+                        'Link': 'Enlace',
+                        'Enlace ID': 'ID del Enlace Original'
+                    })
+                    
+                    # Generar Word con auditoría
+                    word = generate_word_auditado(
+                        df_word, 
+                        title=f"Boletín con Auditoría",
+                        subtitle=f"{', '.join(m_sel)} {', '.join(a_sel)} - Fuentes originales identificadas"
+                    )
+                    
+                    st.success(f"✅ Boletín con auditoría generado con {len(f_df)} documentos.")
+                    st.download_button(
+                        "📄 Descargar Boletín con Auditoría",
+                        word,
+                        f"Boletin_Auditoria_{'_'.join(m_sel)}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                    
+                    # Vista previa
+                    st.dataframe(df_word)
+                else:
+                    st.warning("No se encontraron documentos para los criterios seleccionados.")
+
+    # ==========================================
+    # BOTÓN 3: EXPORTAR A EXCEL
+    # ==========================================
+    if st.button("📊 Exportar a Excel (con auditoría)", type="secondary"):
+        if not m_sel or not a_sel:
+            st.warning("⚠️ Selecciona mes y año.")
+        else:
+            with st.spinner("Generando Excel con auditoría..."):
+                # ===== EXTRAER DATOS (mismo código que los otros botones) =====
+                m_num = [meses_dict[m] for m in m_sel]
+                a_num = [int(a) for a in a_sel]
+                sd = f"01.{min(m_num):02d}.{min(a_num)}"
+                ed = f"{calendar.monthrange(max(a_num), max(m_num))[1]:02d}.{max(m_num):02d}.{max(a_num)}"
+
+                all_dfs = []
+                prog = st.progress(0)
+                txt = st.empty()
+                
+                # ... (todo el código de extracción de los otros botones) ...
+                # (copia el mismo código que usas para el botón de auditoría)
+                
+                # ===== CONSOLIDACIÓN CON AUDITORÍA =====
+                if all_dfs:
+                    f_df = pd.concat(all_dfs, ignore_index=True)
+                    f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
+                    
+                    # Añadir auditoría
+                    def obtener_fuente(row):
+                        if row['Organismo'] == 'FMI':
+                            return identificar_fuente_fmi(row)
+                        else:
+                            return {"nombre": "No aplica", "origen": "No aplica", "url": "", "enlace_id": "N/A"}
+                    
+                    fuentes = f_df.apply(obtener_fuente, axis=1)
+                    f_df['Nombre Fuente'] = fuentes.apply(lambda x: x['nombre'])
+                    f_df['Origen'] = fuentes.apply(lambda x: x['origen'])
+                    f_df['URL Fuente'] = fuentes.apply(lambda x: x['url'])
+                    f_df['Enlace ID'] = fuentes.apply(lambda x: x.get('enlace_id', 'N/A'))
+                    
+                    # Preparar DataFrame para Excel
+                    df_excel = f_df[['Date', 'Categoría', 'Organismo', 'Title', 'Link', 'Nombre Fuente', 'Origen', 'Enlace ID']].copy()
+                    df_excel = df_excel.rename(columns={
+                        'Date': 'Fecha',
+                        'Title': 'Nombre de Documento',
+                        'Link': 'Enlace',
+                        'Nombre Fuente': 'Fuente de Consulta',
+                        'Origen': 'Tipo de Fuente',
+                        'Enlace ID': 'ID del Enlace Original'
+                    })
+                    
+                    # Ordenar por fecha (más reciente primero)
+                    df_excel = df_excel.sort_values('Fecha', ascending=False)
+                    
+                    # ===== CREAR ARCHIVO EXCEL =====
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_excel.to_excel(writer, sheet_name='Boletín con Auditoría', index=False)
+                        
+                        # Ajustar ancho de columnas
+                        worksheet = writer.sheets['Boletín con Auditoría']
+                        for column in worksheet.columns:
+                            max_length = 0
+                            column_letter = column[0].column_letter
+                            for cell in column:
+                                try:
+                                    if len(str(cell.value)) > max_length:
+                                        max_length = len(str(cell.value))
+                                except:
+                                    pass
+                            adjusted_width = min(max_length + 2, 50)
+                            worksheet.column_dimensions[column_letter].width = adjusted_width
+                    
+                    output.seek(0)
+                    
+                    st.success(f"✅ Excel generado con {len(df_excel)} documentos.")
+                    st.download_button(
+                        "📊 Descargar Excel",
+                        output,
+                        f"Boletin_Auditoria_{'_'.join(m_sel)}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    # Mostrar vista previa
+                    st.dataframe(df_excel)
+                else:
+                    st.warning("No se encontraron documentos para los criterios seleccionados.")
 
 elif modo_app == "Categorías":
     st.title("Documentos de Organismos Internacionales")
