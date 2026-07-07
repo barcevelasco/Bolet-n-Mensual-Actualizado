@@ -98,6 +98,24 @@ FUENTES_FMI = {
     },
 }
 
+# ==========================================
+# ENLACES FIJOS PARA PUBLICACIONES INSTITUCIONALES DEL FMI
+# ==========================================
+
+ENLACES_FMI_PUB_INST = [
+    {"id": 1, "nombre": "F&D Magazine", "origen": "JSON Next.js", "url": "https://www.imf.org/en/publications/fandd/issues"},
+    {"id": 2, "nombre": "Fiscal Monitor", "origen": "JSON Next.js", "url": "https://www.imf.org/en/publications/fm"},
+    {"id": 3, "nombre": "Global Financial Stability Report", "origen": "JSON Next.js", "url": "https://www.imf.org/en/publications/gfsr"},
+    {"id": 4, "nombre": "IMF Annual Report", "origen": "JSON Next.js", "url": "https://www.imf.org/en/publications/areb"},
+    {"id": 5, "nombre": "Regional Economic Outlook", "origen": "JSON Next.js", "url": "https://www.imf.org/en/publications/reo"},
+    {"id": 6, "nombre": "World Economic Outlook", "origen": "JSON Next.js", "url": "https://www.imf.org/en/publications/weo"},
+    {"id": 7, "nombre": "Press Releases", "origen": "API Coveo", "url": "https://www.imf.org/en/news/searchnews#sortCriteria=%40imfdate%20descending&cf-type=PRESSRES&df-date=past-3-month..now"},
+    {"id": 8, "nombre": "Country Reports (Article IV) y Mission Concluding", "origen": "API Coveo", "url": "https://www.imf.org/en/search#sortCriteria=%40imfdate%20descending&cf-type=PUBS,COUNTRYREPS,ARTICLE4"},
+]
+
+# ==========================================
+# FUNCIÓN PARA IDENTIFICAR FUENTE FMI
+# ==========================================
 def identificar_fuente_fmi(row):
     """
     Identifica la fuente original de un documento del FMI
@@ -2539,10 +2557,12 @@ def load_country_reports_elibrary(start_date_str, end_date_str):
 ## FMI - F&D Magazine (CORREGIDO)
 ## FMI - F&D Magazine (VERSIÓN CLOUDSCRAPER - SIN SELENIUM)
 @st.cache_data(show_spinner=False)
+## FMI - F&D Magazine (VERSIÓN CON API DIRECTA)
+@st.cache_data(show_spinner=False)
 def load_pub_inst_fandd(start_date_str, end_date_str):
     """
     Extrae ediciones completas de la revista F&D Magazine del FMI
-    Ahora prioriza el enlace directo al PDF (redirectUrl)
+    Usa la API de Next.js directamente para evitar bloqueos
     """
     import requests
     import json
@@ -2553,7 +2573,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
     import time
 
     print("="*50)
-    print("📘 CARGANDO F&D MAGAZINE (con cloudscraper)")
+    print("📘 CARGANDO F&D MAGAZINE (API directa)")
     print(f"   Fechas: {start_date_str} a {end_date_str}")
     print("="*50)
 
@@ -2566,66 +2586,51 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
         end_date = datetime.datetime.now()
         print(f"   ⚠️ Error en fechas, usando rango por defecto")
 
-    url = "https://www.imf.org/en/publications/fandd/issues"
-    
-    # ========== HEADERS COMPLETOS ==========
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
+        'Referer': 'https://www.imf.org/en/publications/fandd/issues',
+        'Origin': 'https://www.imf.org',
     }
 
     rows = []
 
     try:
-        print(f"   📡 Solicitando: {url}")
-        
-        # ========== INTENTAR CON CLOUDSCRAPER ==========
-        try:
-            import cloudscraper
-            print("   🔧 Usando cloudscraper...")
-            scraper = cloudscraper.create_scraper(
-                browser={
-                    'browser': 'chrome',
-                    'platform': 'windows',
-                    'mobile': False
-                },
-                delay=3
-            )
-            res = scraper.get(url, headers=headers, timeout=30)
-            print(f"   Status Code: {res.status_code}")
-        except ImportError:
-            print("   ⚠️ cloudscraper no instalado, usando requests normal...")
-            res = requests.get(url, headers=headers, timeout=15)
-            print(f"   Status Code: {res.status_code}")
+        # ========== PASO 1: Obtener el build ID ==========
+        print("   📡 Obteniendo build ID...")
+        res = requests.get("https://www.imf.org/en/publications/fandd/issues", headers=headers, timeout=15)
         
         if res.status_code != 200:
             print(f"   ❌ Error al acceder: {res.status_code}")
             return pd.DataFrame()
-
-        # Buscar el JSON de Next.js
-        match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', res.text, re.DOTALL)
         
+        # Extraer build ID del HTML
+        match = re.search(r'"buildId":"([^"]+)"', res.text)
         if not match:
-            print("   ❌ No se encontró __NEXT_DATA__")
+            print("   ❌ No se encontró build ID")
             return pd.DataFrame()
-
-        data = json.loads(match.group(1))
-        print("   ✅ JSON encontrado")
         
-        # Buscar los issues
+        build_id = match.group(1)
+        print(f"   ✅ Build ID: {build_id}")
+        
+        # ========== PASO 2: Llamar a la API de Next.js ==========
+        url = f"https://www.imf.org/_next/data/{build_id}/en/publications/fandd/issues.json"
+        print(f"   📡 Solicitando API: {url}")
+        
+        res = requests.get(url, headers=headers, timeout=15)
+        
+        if res.status_code != 200:
+            print(f"   ❌ Error en API: {res.status_code}")
+            return pd.DataFrame()
+        
+        data = res.json()
+        print("   ✅ JSON recibido")
+        
+        # ========== PASO 3: Extraer los issues ==========
         results = []
-        
         try:
-            page_props = data.get('props', {}).get('pageProps', {})
+            page_props = data.get('pageProps', {}).get('props', {})
             component_props = page_props.get('componentProps', {})
             
             for comp_id, comp_data in component_props.items():
@@ -2636,7 +2641,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
                         print(f"   ✅ Encontrados {len(results)} issues")
                         break
         except Exception as e:
-            print(f"   ⚠️ Error navegando: {e}")
+            print(f"   ⚠️ Error navegando en el JSON: {e}")
         
         if not results:
             print("   ❌ No se encontraron issues")
@@ -2653,7 +2658,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
             issue_title = issue.get('issueTitle', {}).get('jsonValue', {}).get('value', '')
             issue_label = issue.get('issueLabel', {}).get('jsonValue', {}).get('value', '')
             
-            # ========== 🔧 CORRECCIÓN: Priorizar redirectUrl ==========
+            # ========== PRIORIZAR redirectUrl ==========
             redirect_url = issue.get('redirectUrl', {}).get('jsonValue', {}).get('value', {})
             if isinstance(redirect_url, dict):
                 issue_url = redirect_url.get('href', '')
@@ -2689,8 +2694,7 @@ def load_pub_inst_fandd(start_date_str, end_date_str):
             
             titulo_final = f"F&D: {issue_label} - {title_clean}" if issue_label else f"F&D: {title_clean}"
             
-            # 🔍 Depuración: mostrar qué enlace se está usando
-            print(f"   📎 {issue_date.strftime('%Y-%m')}: URL = {issue_url[:80]}...")
+            print(f"   📎 {issue_date.strftime('%Y-%m')}: PDF = {issue_url[:80]}...")
             
             rows.append({
                 "Date": issue_date,
@@ -6441,11 +6445,10 @@ def generate_word(df, title="Boletín Mensual", subtitle=""):
     return out
 
 ## FUNCIÓN DE WORD AUDITADO 
-
 def generate_word_auditado(df, title="Boletín Mensual", subtitle=""):
     """
     Genera un Word con auditoría de fuentes.
-    Incluye: ID Enlace, Nombre de la Fuente, Origen, Título con hipervínculo,
+    Incluye: ID Enlace, Nombre de la Fuente, Origen, Estado, Título con hipervínculo,
     y agrupa los documentos por su fuente original.
     """
     from docx import Document
@@ -6470,13 +6473,15 @@ def generate_word_auditado(df, title="Boletín Mensual", subtitle=""):
         run.font.name, run.font.size = 'Calibri', Pt(14)
     doc.add_paragraph()
     
-    # ========== CORRECCIÓN: Usar 'Fecha' en lugar de 'Date' ==========
     # Verificar qué columnas existen
     columnas_disponibles = df.columns.tolist()
     print(f"📋 Columnas disponibles en df_word: {columnas_disponibles}")
     
     # Usar 'Fecha' si existe, o 'Date' si no
     columna_fecha = 'Fecha' if 'Fecha' in columnas_disponibles else 'Date'
+    
+    # ========== NUEVO: Identificar si existe la columna 'Estado' ==========
+    tiene_estado = 'Estado' in columnas_disponibles
     
     # Ordenar por categoría, organismo, fuente y fecha
     df = df.sort_values(['Categoría', 'Organismo', 'Nombre Fuente', columna_fecha], 
@@ -6495,40 +6500,63 @@ def generate_word_auditado(df, title="Boletín Mensual", subtitle=""):
         run.font.color.rgb = docx.shared.RGBColor(0, 32, 91)  # Azul oscuro
         
         p = doc.add_paragraph()
-        run = p.add_run(f"Fuente: {nombre_fuente} (Origen: {origen})")
+        
+        # ========== NUEVO: Mostrar estado si existe ==========
+        if tiene_estado and 'Estado' in group.columns:
+            estado = group['Estado'].iloc[0] if not group['Estado'].empty else "⚠️ Sin publicaciones en el mes"
+            run = p.add_run(f"Fuente: {nombre_fuente} (Origen: {origen}) | {estado}")
+        else:
+            run = p.add_run(f"Fuente: {nombre_fuente} (Origen: {origen})")
+        
         run.bold = True
         run.font.name = 'Calibri'
         run.font.size = Pt(11)
-        run.italic = True
         
-        # Lista de documentos bajo esta fuente
+        # ========== NUEVO: Si no hay documentos, mostrar mensaje ==========
+        # Verificar si hay documentos reales (Title no vacío)
+        tiene_documentos = False
         for _, row in group.iterrows():
+            titulo = str(row.get('Nombre de Documento', ''))
+            if titulo and titulo.strip():
+                tiene_documentos = True
+                break
+        
+        if not tiene_documentos:
             p = doc.add_paragraph(style='List Bullet')
-            titulo = str(row.get('Nombre de Documento', ''))  # ← USAR 'Nombre de Documento'
-            link = str(row.get('Enlace', ''))                 # ← USAR 'Enlace'
-            
-            # ========== CORRECCIÓN: Usar 'Fecha' o 'Date' ==========
-            fecha = row.get(columna_fecha, '')
-            
-            # Formatear fecha
-            if hasattr(fecha, 'strftime'):
-                fecha_str = fecha.strftime('%d/%m/%Y')
-            else:
-                fecha_str = str(fecha)
-            
-            # Agregar el título con hipervínculo
-            if link and link.startswith('http'):
-                # Primero agregamos la fecha
-                run = p.add_run(f"{fecha_str} - ")
-                run.font.name = 'Calibri'
-                run.font.size = Pt(11)
+            run = p.add_run("Sin documentos disponibles este mes")
+            run.font.name = 'Calibri'
+            run.font.size = Pt(11)
+            run.italic = True
+        else:
+            # Lista de documentos bajo esta fuente
+            for _, row in group.iterrows():
+                p = doc.add_paragraph(style='List Bullet')
+                titulo = str(row.get('Nombre de Documento', ''))
+                link = str(row.get('Enlace', ''))
                 
-                # Luego el título con hipervínculo
-                add_hyperlink(p, titulo, link)
-            else:
-                run = p.add_run(f"{fecha_str} - {titulo}")
-                run.font.name = 'Calibri'
-                run.font.size = Pt(11)
+                # Si el título está vacío, saltar (es un enlace fijo sin documentos)
+                if not titulo or not titulo.strip():
+                    continue
+                
+                fecha = row.get(columna_fecha, '')
+                
+                # Formatear fecha
+                if hasattr(fecha, 'strftime'):
+                    fecha_str = fecha.strftime('%d/%m/%Y')
+                else:
+                    fecha_str = str(fecha)
+                
+                # Agregar el título con hipervínculo
+                if link and link.startswith('http'):
+                    run = p.add_run(f"{fecha_str} - ")
+                    run.font.name = 'Calibri'
+                    run.font.size = Pt(11)
+                    
+                    add_hyperlink(p, titulo, link)
+                else:
+                    run = p.add_run(f"{fecha_str} - {titulo}")
+                    run.font.name = 'Calibri'
+                    run.font.size = Pt(11)
         
         doc.add_paragraph()  # Espacio entre secciones
     
@@ -7037,6 +7065,7 @@ if modo_app == "Boletín":
                     prog.progress(paso_actual / total_pasos)
                 
                 # 3. BARRIDO DE PUBLICACIONES INSTITUCIONALES
+                # 3. BARRIDO DE PUBLICACIONES INSTITUCIONALES (BLOQUE MEJORADO PARA FMI)
                 for org in orgs_pub_inst:
                     txt.text(f"Procesando Pub. Institucionales: {org}...")
                     df = pd.DataFrame()
@@ -7056,19 +7085,26 @@ if modo_app == "Boletín":
                         elif org == "CEMLA":
                             df = load_pub_inst_cemla(sd, ed)
                         elif org == "FMI":
+                            # --- MEJORA: Extraer TODOS los documentos ---
                             df_flagships = load_pub_inst_fmi(sd, ed)
                             df_prs = load_press_releases_fmi(sd, ed)
                             df_crs = load_country_reports_fmi(sd, ed)
-                            df_mcs = load_fmi_news_all(sd, ed)  # NUEVO
+                            df_mcs = load_fmi_news_all(sd, ed)
+
+                            # Unir todos los documentos del FMI para Publicaciones Institucionales
                             dfs_a_unir = [d for d in [df_flagships, df_prs, df_crs, df_mcs] if not d.empty]
                             if dfs_a_unir:
+                                # Este df contiene TODOS los documentos de FMI para el mes
                                 df = pd.concat(dfs_a_unir, ignore_index=True)
                                 df = df.sort_values("Date", ascending=False)
+                                print(f"   📊 FMI - TOTAL documentos extraídos: {len(df)}")
+                            else:
+                                print(f"   ⚠️ FMI - No se encontraron documentos para el mes")
                         elif org == "G20":
                             df = load_pub_inst_g20(sd, ed)
                     except Exception as e:
                         print(f"Error en {org}: {e}")
-                    
+
                     if not df.empty:
                         df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
                         df_f = df[(df["Date"].dt.year.isin(a_num)) & (df["Date"].dt.month.isin(m_num))].copy()
@@ -7136,51 +7172,102 @@ if modo_app == "Boletín":
                 # ===== CONSOLIDACIÓN CON AUDITORÍA =====
                 if all_dfs:
                     f_df = pd.concat(all_dfs, ignore_index=True)
-                    
+
                     # Eliminar duplicados
                     f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
-                    
+
                     # Añadir auditoría para FMI
                     def obtener_fuente(row):
                         if row['Organismo'] == 'FMI':
                             return identificar_fuente_fmi(row)
                         else:
                             return {"nombre": "No aplica", "origen": "No aplica", "url": "", "enlace_id": "N/A"}
-                    
+
                     fuentes = f_df.apply(obtener_fuente, axis=1)
                     f_df['Nombre Fuente'] = fuentes.apply(lambda x: x['nombre'])
                     f_df['Origen'] = fuentes.apply(lambda x: x['origen'])
                     f_df['URL Fuente'] = fuentes.apply(lambda x: x['url'])
-                    
-                    # ===== PASO 3: AGREGAR ENLACE ID =====
                     f_df['Enlace ID'] = fuentes.apply(lambda x: x.get('enlace_id', 'N/A'))
-                    # ===== FIN PASO 3 =====
-                    
-                    # ===== NUEVA NUMERACIÓN DE ENLACES (CORRECTA) =====
-                    # Numerar enlaces por fuente original (usando el NOMBRE de la fuente)
 
-                    # Crear un DataFrame con los grupos únicos
-                    grupos_unicos = f_df[['Categoría', 'Organismo', 'Nombre Fuente']].drop_duplicates()
-                    grupos_unicos = grupos_unicos.sort_values(['Categoría', 'Organismo', 'Nombre Fuente'])
+                    # ===== NUEVA NUMERACIÓN FIJA PARA PUBLICACIONES INSTITUCIONALES =====
+                    print("🔍 CATEGORÍAS - FMI Pub. Inst. - Reconstruyendo enlaces fijos...")
 
-                    # Asignar un número secuencial a cada grupo DENTRO DE CADA CATEGORÍA Y ORGANISMO
-                    grupos_unicos['Grupo Fuente'] = grupos_unicos.groupby(['Categoría', 'Organismo']).cumcount() + 1
-                    grupos_unicos['Total Fuentes'] = grupos_unicos.groupby(['Categoría', 'Organismo'])['Grupo Fuente'].transform('max')
+                    # 1. Crear un DataFrame con los 8 enlaces fijos de FMI
+                    enlaces_fijos_list = []
+                    for enlace in ENLACES_FMI_PUB_INST:
+                        enlaces_fijos_list.append({
+                            'Categoría': 'Publicaciones Institucionales',
+                            'Organismo': 'FMI',
+                            'ID Enlace': f"Enlace {enlace['id']} de 8 (FMI - Pub. Inst.)",
+                            'Nombre Fuente': enlace['nombre'],
+                            'Origen': enlace['origen'],
+                            'URL Fuente': enlace['url'],
+                            'enlace_id': str(enlace['id']),
+                            'Title': '',  # Sin documentos por defecto
+                            'Link': '',   # Sin documentos por defecto
+                            'Date': None,  # Sin documentos por defecto
+                            'Estado': '⚠️ Sin publicaciones en el mes'  # Estado por defecto
+                        })
 
-                    # Unir de vuelta al DataFrame principal
-                    f_df = f_df.merge(
-                        grupos_unicos[['Categoría', 'Organismo', 'Nombre Fuente', 'Grupo Fuente', 'Total Fuentes']],
-                        on=['Categoría', 'Organismo', 'Nombre Fuente'],
-                        how='left'
-                    )
+                    df_enlaces_fijos = pd.DataFrame(enlaces_fijos_list)
 
-                    # Crear el ID de enlace
-                    f_df['ID Enlace'] = f_df.apply(
-                        lambda row: f"Enlace {row['Grupo Fuente']} de {row['Total Fuentes']} ({row['Organismo']} - {row['Categoría']})",
-                        axis=1
-                    )
+                    # 2. Identificar qué enlaces tienen documentos reales
+                    mask_fmi_pub = (f_df['Categoría'] == 'Publicaciones Institucionales') & (f_df['Organismo'] == 'FMI')
+                    df_fmi_pub = f_df[mask_fmi_pub].copy()
+
+                    print(f"   📊 Documentos FMI Pub. Inst. encontrados: {len(df_fmi_pub)}")
+
+                    # Agrupar documentos reales por Nombre Fuente
+                    docs_por_fuente = {}
+                    if not df_fmi_pub.empty:
+                        for nombre_fuente in df_fmi_pub['Nombre Fuente'].unique():
+                            docs = df_fmi_pub[df_fmi_pub['Nombre Fuente'] == nombre_fuente]
+                            docs_por_fuente[nombre_fuente] = docs
+
+                    # 3. Rellenar los enlaces fijos con los documentos reales (si existen)
+                    for idx, row in df_enlaces_fijos.iterrows():
+                        nombre_fuente = row['Nombre Fuente']
+                        if nombre_fuente in docs_por_fuente:
+                            docs = docs_por_fuente[nombre_fuente]
+                            # Tomar el primer documento como ejemplo para el título
+                            primer_doc = docs.iloc[0]
+                            df_enlaces_fijos.loc[idx, 'Title'] = primer_doc['Title']
+                            df_enlaces_fijos.loc[idx, 'Link'] = primer_doc['Link']
+                            df_enlaces_fijos.loc[idx, 'Date'] = primer_doc['Date']
+                            df_enlaces_fijos.loc[idx, 'Estado'] = f'✅ {len(docs)} documentos disponibles'
+                            print(f"   ✅ Enlace {row['ID Enlace']} - {nombre_fuente}: {len(docs)} documentos")
+
+                    print(f"   📊 Enlaces fijos reconstruidos: {len(df_enlaces_fijos)}")
+
+                    # 4. Separar los datos que NO son FMI en Publicaciones Institucionales
+                    f_df_resto = f_df[~mask_fmi_pub].copy()
+
+                    # 5. Para el resto, mantener la numeración dinámica
+                    if not f_df_resto.empty:
+                        grupos_unicos = f_df_resto[['Categoría', 'Organismo', 'Nombre Fuente']].drop_duplicates()
+                        grupos_unicos = grupos_unicos.sort_values(['Categoría', 'Organismo', 'Nombre Fuente'])
+                        grupos_unicos['Grupo Fuente'] = grupos_unicos.groupby(['Categoría', 'Organismo']).cumcount() + 1
+                        grupos_unicos['Total Fuentes'] = grupos_unicos.groupby(['Categoría', 'Organismo'])['Grupo Fuente'].transform('max')
+                        f_df_resto = f_df_resto.merge(
+                            grupos_unicos[['Categoría', 'Organismo', 'Nombre Fuente', 'Grupo Fuente', 'Total Fuentes']],
+                            on=['Categoría', 'Organismo', 'Nombre Fuente'],
+                            how='left'
+                        )
+                        f_df_resto['ID Enlace'] = f_df_resto.apply(
+                            lambda row: f"Enlace {row['Grupo Fuente']} de {row['Total Fuentes']} ({row['Organismo']} - {row['Categoría']})",
+                            axis=1
+                        )
+
+                    # 6. Combinar todo
+                    df_enlaces_fijos_clean = df_enlaces_fijos.drop(columns=['Estado', 'documentos'], errors='ignore')
+
+                    # Unir
+                    f_df_final = pd.concat([df_enlaces_fijos_clean, f_df_resto], ignore_index=True)
+
+                    # 7. Reemplazar f_df con f_df_final para que el resto del código funcione
+                    f_df = f_df_final
                     # ===== FIN NUEVA NUMERACIÓN =====
-                    
+
                     # Preparar DataFrame para Word
                     df_word = f_df[['Categoría', 'Organismo', 'ID Enlace', 'Nombre Fuente', 'Origen', 'Enlace ID', 'Date', 'Title', 'Link']].copy()
                     df_word = df_word.rename(columns={
@@ -7189,24 +7276,91 @@ if modo_app == "Boletín":
                         'Link': 'Enlace',
                         'Enlace ID': 'ID del Enlace Original'
                     })
-                    
+
+                    # Guardar el DataFrame en session_state para depuración
+                    st.session_state['df_word_auditado'] = df_word
+                    st.session_state['f_df_final'] = f_df
+                    print(f"📋 Columnas disponibles en df_word: {df_word.columns.tolist()}")
+                    print(f"📊 Total de documentos en df_word: {len(df_word)}")
+
                     # Generar Word con auditoría
                     word = generate_word_auditado(
                         df_word, 
                         title=f"Boletín con Auditoría",
                         subtitle=f"{', '.join(m_sel)} {', '.join(a_sel)} - Fuentes originales identificadas"
                     )
-                    
-                    st.success(f"✅ Boletín con auditoría generado con {len(f_df)} documentos.")
+
+                    st.success(f"✅ Boletín con auditoría generado con {len(df_word)} documentos.")
                     st.download_button(
                         "📄 Descargar Boletín con Auditoría",
                         word,
                         f"Boletin_Auditoria_{'_'.join(m_sel)}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                     )
-                    
-                    # Vista previa
+
+                    # ========== VISTA PREVIA ==========
+                    st.markdown("### 📋 Vista previa de datos")
                     st.dataframe(df_word)
+                    # ============================================================
+                    # ====== CÓDIGO DE DEPURACIÓN ======
+                    # ============================================================
+                    with st.expander("🔍 Ver datos de depuración (FMI)"):
+                                        if 'f_df_final' in st.session_state:
+                                            st.write("**DataFrame final con todos los documentos:**")
+                                            st.dataframe(st.session_state['f_df_final'])
+                                            
+                                            st.write("**Documentos de FMI (Publicaciones Institucionales):**")
+                                            fmi_pub = st.session_state['f_df_final'][
+                                                (st.session_state['f_df_final']['Categoría'] == 'Publicaciones Institucionales') & 
+                                                (st.session_state['f_df_final']['Organismo'] == 'FMI')
+                                            ]
+                                            st.dataframe(fmi_pub)
+                                            
+                                            # Información adicional útil
+                                            st.write("**Conteo de documentos por fuente FMI:**")
+                                            if not fmi_pub.empty:
+                                                conteo_fuentes = fmi_pub['Nombre Fuente'].value_counts()
+                                                st.dataframe(conteo_fuentes)
+                                            else:
+                                                st.info("No hay documentos de FMI en Publicaciones Institucionales")
+                                    # ============================================================
+                                            # ============================================================
+                                            # ====== NUEVO: ENLACES FIJOS DE FMI (AQUÍ VA) ======
+                                            # ============================================================
+                                            st.write("**🔗 Enlaces fijos de FMI (8 enlaces):**")
+                                            enlaces_fijos = st.session_state['f_df_final'][
+                                                st.session_state['f_df_final']['ID Enlace'].str.contains('Enlace \d de 8', na=False)
+                                            ]
+                                            
+                                            # Mostrar solo las columnas relevantes
+                                            if not enlaces_fijos.empty:
+                                                # Seleccionar columnas para mostrar
+                                                columnas_mostrar = ['ID Enlace', 'Nombre Fuente', 'Estado', 'Nombre de Documento']
+                                                # Verificar que las columnas existan
+                                                columnas_existentes = [col for col in columnas_mostrar if col in enlaces_fijos.columns]
+                                                
+                                                # Si 'Estado' no existe, crearla con valor por defecto
+                                                if 'Estado' not in enlaces_fijos.columns:
+                                                    enlaces_fijos['Estado'] = '⚠️ Sin publicaciones en el mes'
+                                                    columnas_existentes = ['ID Enlace', 'Nombre Fuente', 'Estado', 'Nombre de Documento']
+                                                
+                                                # Si 'Nombre de Documento' no existe, usar 'Title'
+                                                if 'Nombre de Documento' not in enlaces_fijos.columns and 'Title' in enlaces_fijos.columns:
+                                                    enlaces_fijos['Nombre de Documento'] = enlaces_fijos['Title']
+                                                    if 'Nombre de Documento' not in columnas_existentes:
+                                                        columnas_existentes.append('Nombre de Documento')
+                                                
+                                                st.dataframe(enlaces_fijos[columnas_existentes])
+                                                
+                                                # Resumen de estado de los enlaces
+                                                st.write("**Resumen de estado:**")
+                                                if 'Estado' in enlaces_fijos.columns:
+                                                    resumen_estado = enlaces_fijos['Estado'].value_counts()
+                                                    st.dataframe(resumen_estado)
+                                            else:
+                                                st.info("No se encontraron enlaces fijos en el DataFrame")
+                                    # ============================================================
+
                 else:
                     st.warning("No se encontraron documentos para los criterios seleccionados.")
 
