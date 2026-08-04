@@ -5827,15 +5827,16 @@ def load_data_cef(start_date_str, end_date_str):
 ## - Discursos - Banco de España - 
 @st.cache_data(show_spinner=False)
 def load_data_bde(start_date_str, end_date_str):
-    """Extractor Banco de España - Versión con extracción de nombres reales desde PDF"""
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from PyPDF2 import PdfReader
-    import io
+    """
+    Extractor Banco de España - Versión SIN Selenium con selectores flexibles y filtro de discursos
+    """
     import requests
+    from bs4 import BeautifulSoup
     import datetime
     import time
     import re
+    import io
+    from PyPDF2 import PdfReader
 
     try:
         start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
@@ -5846,18 +5847,21 @@ def load_data_bde(start_date_str, end_date_str):
         end_date = datetime.datetime.now()
 
     rows = []
+    
     url = "https://www.bde.es/wbe/en/noticias-eventos/actualidad-banco-espana/intervenciones-publicas/"
     
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
+
     def extraer_autor_y_cargo_desde_pdf(pdf_url):
         """Extrae el nombre y cargo del autor desde el PDF"""
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(pdf_url, headers=headers, timeout=15)
             if response.status_code != 200:
                 return None, None
@@ -5895,20 +5899,6 @@ def load_data_bde(start_date_str, end_date_str):
                     elif i + 1 < len(lineas) and lineas[i+1].strip() and len(lineas[i+1].strip().split()) >= 2:
                         nombre = lineas[i+1].strip()
                     break
-                elif re.search(r'Subgobernadora', linea_limpia, re.IGNORECASE):
-                    cargo = "Subgobernadora"
-                    if i > 0 and lineas[i-1].strip() and len(lineas[i-1].strip().split()) >= 2:
-                        nombre = lineas[i-1].strip()
-                    elif i + 1 < len(lineas) and lineas[i+1].strip() and len(lineas[i+1].strip().split()) >= 2:
-                        nombre = lineas[i+1].strip()
-                    break
-                elif re.search(r'D\.G\.|Director General', linea_limpia, re.IGNORECASE):
-                    cargo = "Director General"
-                    if i > 0 and lineas[i-1].strip() and len(lineas[i-1].strip().split()) >= 2:
-                        nombre = lineas[i-1].strip()
-                    elif i + 1 < len(lineas) and lineas[i+1].strip() and len(lineas[i+1].strip().split()) >= 2:
-                        nombre = lineas[i+1].strip()
-                    break
             
             if not nombre:
                 for linea in lineas[:15]:
@@ -5931,129 +5921,335 @@ def load_data_bde(start_date_str, end_date_str):
             print(f"      ⚠️ Error extrayendo del PDF: {e}")
             return None, None
 
-    try:
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.get(url)
-        time.sleep(8)
-
-        js_script = """
-        let data = [];
-        let results = document.querySelectorAll('.block-search-result, .block-search-result--image');
-        results.forEach(el => {
-            let titleEl = el.querySelector('.block-search-result__title, a');
-            let dateEl = el.querySelector('.block-search-result__date');
-            let linkEl = el.querySelector('a');
-            if (titleEl && dateEl && linkEl) {
-                data.push({
-                    title: titleEl.innerText,
-                    dateText: dateEl.innerText,
-                    link: linkEl.href
-                });
-            }
-        });
-        return data;
+    def es_discurso(titulo):
         """
-        extracted = driver.execute_script(js_script)
-        driver.quit()
+        Determina si un documento es un discurso basado en su título.
+        Retorna True si es discurso, False si no lo es.
+        """
+        titulo_lower = titulo.lower()
+        
+        # ========== 1. EXCEPCIONES ESPECÍFICAS ==========
+        # Discursos que deben incluirse aunque no cumplan otros patrones
+        excepciones = [
+            'conference on the spanish economy',  # Soledad Núñez tiene PDF de discurso
+            'deputy governor. conference on the',  # Mismo caso
+            'subgobernadora. conferencia sobre',   # Versión en español
+        ]
+        for excepcion in excepciones:
+            if excepcion in titulo_lower:
+                return True
+        
+        # ========== 2. PALABRAS CLAVE DE EXCLUSIÓN ==========
+        # Si el título contiene alguna de estas, NO es un discurso
+        palabras_excluir = [
+            # Presentaciones y reportes (que NO son discursos)
+            'presentación', 'presentacion', 'presentation of',
+            'annual report', 'memoria anual',
+            'summary', 'resumen ejecutivo',
+            'brochure', 'folleto',
+            'infographic', 'infografía',
+            'powerpoint', 'power point', 'ppt',
+            'slides', 'diapositivas',
+            'video', 'podcast',
+            'press release', 'comunicado de prensa',
+            'interview', 'entrevista',
+            'article', 'artículo',
+            'blog post',
+            # Conferencias que NO son discursos (sin autor)
+            '5th banco de españa',
+            'banco de españa-cemfi-uimp',
+        ]
+        
+        # ========== 3. VERIFICAR SI TIENE AUTOR (NOMBRE AL INICIO) ==========
+        # Patrón: "Nombre Apellido: Título" o "Nombre Apellido - Título"
+        tiene_autor = bool(re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+[:：\-–—]', titulo))
+        
+        # ========== 4. LÓGICA DE FILTRADO ==========
+        
+        # Caso especial: Si tiene autor Y es una conferencia, es un discurso
+        # Ejemplo: "Soledad Núñez: Conference on the Spanish Economy"
+        if tiene_autor and 'conference' in titulo_lower:
+            # Verificar que no sea una presentación
+            es_presentacion = any(p in titulo_lower for p in ['presentation of', 'presentación'])
+            if not es_presentacion:
+                return True
+        
+        # Caso especial: Si tiene autor Y el título contiene palabras de discurso
+        if tiene_autor:
+            palabras_discurso = ['speech', 'remarks', 'address', 'statement', 'intervención', 'discurso']
+            for p in palabras_discurso:
+                if p in titulo_lower:
+                    return True
+            # Si tiene autor pero no tiene palabras de discurso, lo incluimos
+            # (asumimos que es un discurso a menos que sea una presentación)
+            es_presentacion = any(p in titulo_lower for p in ['presentation of', 'presentación', 'slides', 'ppt'])
+            if not es_presentacion:
+                return True
+        
+        # ========== 5. PALABRAS CLAVE DE INCLUSIÓN ==========
+        # Si el título contiene alguna de estas, ES un discurso
+        palabras_incluir = [
+            'speech', 'discurso',
+            'remarks', 'palabras',
+            'opening remarks', 'palabras de apertura',
+            'closing remarks', 'palabras de clausura',
+            'keynote', 'inaugural',
+            'address', 'intervención',
+            'statement', 'declaración',
+            'testimony', 'testimonio',
+        ]
+        
+        for palabra in palabras_incluir:
+            if palabra in titulo_lower:
+                return True
+        
+        # ========== 6. EXCLUIR POR PALABRAS DE EXCLUSIÓN ==========
+        for palabra in palabras_excluir:
+            if palabra in titulo_lower:
+                return False
+        
+        # ========== 7. FALBACK ==========
+        # Si no está claro, lo incluimos (mejor falso positivo que falso negativo)
+        # Pero solo si tiene más de 4 palabras (para evitar títulos muy cortos)
+        if len(titulo.split()) >= 4:
+            return True
+        
+        return False
 
-        print(f"   📚 Discursos encontrados: {len(extracted)}")
-
-        for idx, item in enumerate(extracted):
-            raw_title = item['title'].strip()
-            raw_date_str = item['dateText'].strip()
-            page_link = item['link']
-            
-            if not raw_title or not raw_date_str:
-                continue
-
-            parsed_date = None
+    try:
+        print(f"📡 Solicitando página: {url}")
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code != 200:
+            print(f"❌ Error al acceder a la página: {response.status_code}")
+            return pd.DataFrame()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # ========== BUSCAR ELEMENTOS CON MÚLTIPLES SELECTORES ==========
+        items = []
+        
+        selectores = [
+            'div.block-search-result',
+            'div.block-search-result--image',
+            'article.search-result',
+            'li.search-result',
+            'div.search-result',
+            'div.result-item',
+            'div.teaser',
+            'div.news-item',
+            'article.news',
+            'div.listing-item',
+            'div.item',
+            'div[class*="search-result"]',
+            'div[class*="result"]',
+            'div[class*="news"]',
+            'div[class*="publication"]',
+            '.search-results article',
+            '.search-results li',
+            '.results article',
+            '.results li',
+        ]
+        
+        for selector in selectores:
+            encontrados = soup.select(selector)
+            if encontrados:
+                print(f"   ✅ Selector '{selector}' encontró {len(encontrados)} elementos")
+                items = encontrados
+                break
+        
+        if not items:
+            print("   ⚠️ Buscando elementos por estructura genérica...")
+            for div in soup.find_all(['div', 'article', 'li']):
+                has_link = div.find('a', href=True)
+                has_date = div.find(string=re.compile(r'\d{2}/\d{2}/\d{4}'))
+                if has_link and has_date:
+                    items.append(div)
+            print(f"   📚 Encontrados {len(items)} elementos por estructura genérica")
+        
+        if not items:
+            print("⚠️ No se encontraron elementos en la página")
+            with open("bde_debug.html", "w", encoding="utf-8") as f:
+                f.write(response.text)
+            print("   💾 HTML guardado en bde_debug.html para depuración")
+            return pd.DataFrame()
+        
+        print(f"   📚 Elementos encontrados: {len(items)}")
+        
+        for item in items:
             try:
-                parsed_date = datetime.datetime.strptime(raw_date_str, '%d/%m/%Y')
-            except:
-                match = re.search(r'(\d{2}/\d{2}/\d{4})', raw_date_str)
-                if match:
-                    parsed_date = datetime.datetime.strptime(match.group(1), '%d/%m/%Y')
-
-            if parsed_date and start_date <= parsed_date <= end_date:
-                print(f"   🔍 Procesando ({idx+1}/{len(extracted)}): {parsed_date.strftime('%Y-%m-%d')}")
+                # === 1. EXTRAER TÍTULO ===
+                title_elem = None
+                
+                for tag in ['h3', 'h4', 'h5']:
+                    title_elem = item.find(tag)
+                    if title_elem:
+                        break
+                
+                if not title_elem:
+                    title_elem = item.find('div', class_=re.compile(r'title', re.I))
+                
+                if not title_elem:
+                    title_elem = item.find('a', class_=re.compile(r'title', re.I))
+                
+                if not title_elem:
+                    for a in item.find_all('a', href=True):
+                        texto = a.get_text(strip=True)
+                        if len(texto) > 15:
+                            title_elem = a
+                            break
+                
+                if not title_elem:
+                    continue
+                
+                a_tag = title_elem.find('a') if title_elem.name != 'a' else title_elem
+                if not a_tag:
+                    a_tag = title_elem
+                
+                raw_title = a_tag.get_text(strip=True)
+                link = a_tag.get('href', '')
+                
+                if len(raw_title) < 10:
+                    parent_text = item.get_text(strip=True)
+                    raw_title = re.sub(r'\s+', ' ', parent_text).strip()
+                    match = re.match(r'^(.*?)\s+\d{2}/\d{2}/\d{4}', raw_title)
+                    if match:
+                        raw_title = match.group(1).strip()
+                
+                if not raw_title or len(raw_title) < 5:
+                    continue
+                
+                # === FILTRO: VERIFICAR SI ES UN DISCURSO ===
+                if not es_discurso(raw_title):
+                    print(f"      ⏭️ Excluido (no es discurso): {raw_title[:50]}...")
+                    continue
+                
+                # === 2. EXTRAER FECHA ===
+                date_elem = None
+                
+                date_elem = item.find('div', class_=re.compile(r'date', re.I))
+                if not date_elem:
+                    date_elem = item.find('span', class_=re.compile(r'date', re.I))
+                if not date_elem:
+                    date_elem = item.find('time')
+                if not date_elem:
+                    item_text = item.get_text()
+                    match = re.search(r'(\d{2}/\d{2}/\d{4})', item_text)
+                    if match:
+                        raw_date_str = match.group(1)
+                    else:
+                        continue
+                else:
+                    raw_date_str = date_elem.get_text(strip=True)
+                
+                parsed_date = None
+                try:
+                    parsed_date = datetime.datetime.strptime(raw_date_str, '%d/%m/%Y')
+                except:
+                    match = re.search(r'(\d{2}/\d{2}/\d{4})', raw_date_str)
+                    if match:
+                        try:
+                            parsed_date = datetime.datetime.strptime(match.group(1), '%d/%m/%Y')
+                        except:
+                            pass
+                
+                if not parsed_date:
+                    continue
+                
+                if parsed_date < start_date or parsed_date > end_date:
+                    continue
+                
+                # === 3. CONSTRUIR URL COMPLETA ===
+                if link.startswith('/'):
+                    link = "https://www.bde.es" + link
+                elif not link.startswith('http'):
+                    link = "https://www.bde.es" + '/' + link.lstrip('/')
+                
+                print(f"   🔍 Procesando: {parsed_date.strftime('%Y-%m-%d')} - {raw_title[:50]}...")
+                
+                # === 4. BUSCAR PDF EN LA PÁGINA INDIVIDUAL ===
+                pdf_link = None
+                autor = None
+                titulo_final = raw_title
                 
                 try:
-                    page_response = requests.get(page_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                    page_response = requests.get(link, headers=headers, timeout=10)
                     if page_response.status_code == 200:
-                        from bs4 import BeautifulSoup
-                        soup = BeautifulSoup(page_response.text, 'html.parser')
-                        pdf_link = None
-                        for a in soup.find_all('a', href=True):
-                            if a['href'].endswith('.pdf'):
-                                pdf_link = a['href']
+                        page_soup = BeautifulSoup(page_response.text, 'html.parser')
+                        
+                        for a in page_soup.find_all('a', href=True):
+                            href = a['href']
+                            if href.endswith('.pdf') or '.pdf' in href.lower():
+                                pdf_link = href
                                 if pdf_link.startswith('/'):
                                     pdf_link = "https://www.bde.es" + pdf_link
+                                elif not pdf_link.startswith('http'):
+                                    pdf_link = "https://www.bde.es" + '/' + pdf_link.lstrip('/')
                                 break
+                        
+                        # ========== FILTRO: Si no hay PDF, NO es un discurso ==========
+                        if not pdf_link:
+                            print(f"      ⏭️ Excluido (sin PDF, probablemente video): {raw_title[:50]}...")
+                            continue
+                        # ===================================================================
                         
                         if pdf_link:
                             print(f"      📄 PDF encontrado, extrayendo autor...")
                             autor, cargo = extraer_autor_y_cargo_desde_pdf(pdf_link)
-                            # Dentro de load_data_bde(), después de encontrar el autor
                             if autor:
-                                titulo_limpio = raw_title
-                                
-                                # ========== NUEVA LIMPIEZA MEJORADA ==========
-                                # Eliminar patrones comunes de cargo (en español e inglés)
-                                patrones_cargo = [
-                                    r'D\.G\.\s*Econom[íi]a\.\s*',      # D.G. Economía. o D.G. Economics.
-                                    r'D\.G\.\s*Economics\.\s*',         # D.G. Economics.
-                                    r'Deputy\s*Governor\.\s*',          # Deputy Governor.
-                                    r'Governor\.\s*',                   # Governor.
-                                    r'Subgobernador[a]?\.\s*',          # Subgobernadora. o Subgobernador.
-                                    r'Director\s*General\.\s*',         # Director General.
-                                    r'Head\s*of\s*\w+\.\s*',            # Head of Department.
-                                    r'Director\.\s*',                   # Director.
-                                    r'Chief\s*Economist\.\s*',          # Chief Economist.
-                                    r'Gerente\s*General\.\s*',          # Gerente General.
-                                    r'Vicepresident[ae]\.\s*',          # Vicepresidenta. o Vicepresidente.
-                                    r'President[ae]\.\s*',              # Presidenta. o Presidente.
-                                ]
-                                
-                                for patron in patrones_cargo:
-                                    titulo_limpio = re.sub(patron, '', titulo_limpio, flags=re.IGNORECASE)
-                                
-                                # También eliminar cualquier texto entre paréntesis que parezca un cargo
-                                titulo_limpio = re.sub(r'\s*\([^)]*(?:D\.G\.|Governor|Director|Econom[íi]a)[^)]*\)\s*', ' ', titulo_limpio, flags=re.IGNORECASE)
-                                
-                                # Limpiar espacios múltiples y puntos al inicio
-                                titulo_limpio = re.sub(r'\s+', ' ', titulo_limpio).strip()
-                                titulo_limpio = re.sub(r'^\.\s*', '', titulo_limpio)
-                                
-                                # Construir título final
-                                titulo_final = f"{autor}: {titulo_limpio}"
-                                
-                                # Limpieza adicional: eliminar " : " si el título está vacío
-                                titulo_final = re.sub(r':\s*$', '', titulo_final)
-                                
-                                print(f"      📝 Título limpio: {titulo_final[:80]}...")
-                            
-                            else:
-                                print(f"      ⚠️ No se pudo extraer autor, usando formato estándar")
-                                titulo_final = re.sub(r'\.\s+', ': ', raw_title, count=1)
-                                titulo_final = re.sub(r'\s+', ' ', titulo_final).strip()
-                    else:
-                        titulo_final = re.sub(r'\.\s+', ': ', raw_title, count=1)
-                        
+                                print(f"      📝 Autor extraído: {autor}")
                 except Exception as e:
-                    print(f"      ⚠️ Error accediendo a la página: {e}")
-                    titulo_final = re.sub(r'\.\s+', ': ', raw_title, count=1)
+                    print(f"      ⚠️ Error accediendo a página individual: {e}")
+                    continue
                 
-                if not any(r['Link'] == page_link for r in rows):
+                # === 5. LIMPIAR TÍTULO ===
+                titulo_limpio = raw_title
+                
+                patrones_cargo_principio = [
+                    r'^Governor\.\s*', r'^Deputy\s*Governor\.\s*', 
+                    r'^Subgobernador[a]?\.\s*', r'^Director\s*General\.\s*',
+                    r'^D\.G\.\s*Econom[íi]a\.\s*', r'^D\.G\.\s*Economics\.\s*',
+                    r'^Director\.\s*', r'^Chief\s*Economist\.\s*',
+                    r'^Gerente\s*General\.\s*', r'^Vicepresident[ae]\.\s*',
+                    r'^President[ae]\.\s*', r'^Head\s*of\s*\w+\.\s*',
+                ]
+                
+                for patron in patrones_cargo_principio:
+                    titulo_limpio = re.sub(patron, '', titulo_limpio, flags=re.IGNORECASE)
+                
+                titulo_limpio = re.sub(r'^[:.\-\s]+', '', titulo_limpio).strip()
+                titulo_limpio = re.sub(r'\s+', ' ', titulo_limpio).strip()
+                
+                # === 6. CONSTRUIR TÍTULO FINAL ===
+                if autor:
+                    if autor.lower() not in titulo_limpio.lower():
+                        titulo_final = f"{autor}: {titulo_limpio}"
+                    else:
+                        titulo_final = titulo_limpio
+                else:
+                    titulo_final = titulo_limpio
+                
+                titulo_final = re.sub(r'\s+', ' ', titulo_final).strip()
+                titulo_final = titulo_final.strip('"').strip("'").strip()
+                
+                # === 7. AGREGAR A RESULTADOS ===
+                if not any(r['Link'] == link for r in rows):
                     rows.append({
                         "Date": parsed_date,
                         "Title": titulo_final,
-                        "Link": page_link,
+                        "Link": link,
                         "Organismo": "BdE (España)"
                     })
                     print(f"      ✅ Agregado: {titulo_final[:80]}...")
-
+                
+            except Exception as e:
+                print(f"   ⚠️ Error procesando item: {e}")
+                continue
+                
     except Exception as e:
         print(f"❌ Error BDE: {e}")
+        import traceback
+        traceback.print_exc()
 
     df = pd.DataFrame(rows)
     if not df.empty:
