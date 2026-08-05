@@ -5219,15 +5219,15 @@ def load_data_bm(start_date_str, end_date_str):
 ## Banco de Canadá - Discrusos - boc
 @st.cache_data(show_spinner=False)
 def load_data_boc(start_date_str, end_date_str):
-    """Extractor Banco de Canadá (BoC) - Versión estable mejorada"""
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
+    """
+    Extractor Banco de Canadá (BoC) - Versión con filtro de video/transcript
+    """
+    import requests
     from bs4 import BeautifulSoup
     import datetime
     import time
     import re
     from dateutil import parser
-    import requests
 
     try:
         start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
@@ -5239,165 +5239,371 @@ def load_data_boc(start_date_str, end_date_str):
         print(f"⚠️ Error en fechas, usando rango por defecto")
     
     rows = []
-    page = 1
+    seen_links = set()
     
-    def limpiar_titulo(titulo):
-        """Limpia el título de texto basura"""
-        titulo = re.sub(r'(?i)^Speech\s*[:\-]\s*', '', titulo)
-        titulo = re.sub(r'(?i)^Remarks\s*[:\-]\s*', '', titulo)
-        titulo = re.sub(r'(?i)^Opening\s+statement\s*[:\-]\s*', '', titulo)
-        titulo = re.sub(r'(?i)^Fireside\s+chat\s*[:\-]\s*', '', titulo)
-        titulo = re.sub(r'(?i)^Press\s+Conference\s*[:\-]\s*', '', titulo)
-        return titulo.strip()
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+    }
     
-    def extraer_autor_desde_html(soup_page, titulo_raw, url):
-        """Extrae el autor - Versión estable (con nombres conocidos + fallback)"""
+    def es_discurso_legitimo(titulo, url):
+        """
+        Determina si un documento es un discurso legítimo.
+        """
+        titulo_lower = titulo.lower()
+        url_lower = url.lower()
         
-        page_text = soup_page.get_text()
-        is_webcast = 'multimedia' in url or 'webcast' in titulo_raw.lower()
+        # ========== 1. EXCLUIR POR URL ==========
+        if '/multimedia/' in url_lower:
+            return False
         
-        # === 1. CONFERENCIAS DE PRENSA ===
-        if 'press conference' in titulo_raw.lower():
-            if is_webcast:
-                return "Tiff Macklem and Carolyn Rogers"
+        # ========== 2. PALABRAS CLAVE DE EXCLUSIÓN ==========
+        # Solo excluir "press conference" si NO tiene "opening statement"
+        if 'press conference' in titulo_lower:
+            # Si tiene "opening statement", es un discurso legítimo
+            if 'opening statement' in titulo_lower:
+                pass  # No excluir, continuar con otras verificaciones
             else:
-                return "Tiff Macklem"
+                return False  # Excluir si es solo "press conference"
         
-        # === 2. SPEECH SUMMARIES y REMARKS ===
-        # Buscar en media-authors primero (más confiable)
-        author_span = soup_page.find('span', class_='media-authors')
-        if author_span:
-            author_link = author_span.find('a')
-            if author_link:
-                autor = author_link.text.strip()
-                # Limpiar títulos como "Governor" del autor
-                autor = re.sub(r'^Governor\s+', '', autor)
-                autor = re.sub(r'^Deputy\s+Governor\s+', '', autor)
-                autor = re.sub(r'^Senior\s+Deputy\s+Governor\s+', '', autor)
-                return autor
+        # Otras exclusiones
+        exclusiones = [
+            'media availability',
+            'response to',
+            'labour congress',
+            'cross-border coordination',
+            'market participants survey',
+            'notification by email',
+            'summary of governing council',
+            'release of the',
+        ]
         
-        # === 3. BUSCAR EN EXCERPT ===
-        excerpt = soup_page.find('span', class_='media-excerpt')
-        if excerpt:
-            excerpt_text = excerpt.get_text()
-            # Buscar "Deputy Governor Sharon Kozicki"
-            match = re.search(r'(?:Deputy Governor|Senior Deputy Governor|Governor)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', excerpt_text)
-            if match:
-                return match.group(1).strip()
+        for palabra in exclusiones:
+            if palabra in titulo_lower:
+                return False
         
-        # === 4. BUSCAR EN TÍTULO DE PÁGINA ===
-        title_tag = soup_page.find('title')
-        if title_tag:
-            title_text = title_tag.text
-            match = re.search(r'by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', title_text)
-            if match:
-                return match.group(1).strip()
+        # ========== 3. PALABRAS CLAVE DE INCLUSIÓN ==========
+        inclusiones = [
+            'opening statement',
+            'closing statement',
+            'opening remarks',
+            'closing remarks',
+            'monetary policy report',
+            'speech',
+            'remarks',
+            'address',
+            'testimony',
+            'fireside chat',
+            'keynote',
+            'inaugural',
+        ]
         
-        # === 5. NOMBRES CONOCIDOS (FALLBACK) ===
-        if 'Sharon Kozicki' in page_text:
-            return "Sharon Kozicki"
-        if 'Tiff Macklem' in page_text:
-            return "Tiff Macklem"
-        if 'Carolyn Rogers' in page_text:
-            return "Carolyn Rogers"
+        for palabra in inclusiones:
+            if palabra in titulo_lower:
+                return True
         
-        return None
+        # ========== 4. PATRONES DE TÍTULO ==========
+        patrones = [
+            r'^(?:Governor|Deputy Governor|Senior Deputy Governor)\s+[A-Z][a-z]+',
+            r'^Adjusting for',
+            r'^Global imbalances',
+            r'^[A-Z][a-z]+ing\s+for',
+        ]
+        
+        for patron in patrones:
+            if re.search(patron, titulo, re.IGNORECASE):
+                return True
+        
+        return False
     
-    while True:
+    def tiene_transcript_o_texto(soup, url):
+            """
+            Verifica si la página contiene un transcript o texto del discurso.
+            Retorna True si hay transcript, False si es solo video.
+            """
+            # ========== 1. EXCLUIR URLS DE MULTIMEDIA ==========
+            if '/multimedia/' in url:
+                print(f"      📹 URL de multimedia detectada, buscando transcript...")
+                # Aún así, revisamos si tiene transcript
+            
+            # ========== 2. BUSCAR EL CONTENIDO PRINCIPAL ==========
+            article = soup.find('article')
+            if not article:
+                article = soup.find('div', class_='entry-content')
+            if not article:
+                article = soup.find('main')
+            if not article:
+                article = soup.find('div', id='content')
+            
+            if not article:
+                return False
+            
+            text = article.get_text()
+            text_clean = re.sub(r'\s+', ' ', text).strip()
+            
+            # ========== 3. VERIFICAR SI HAY TRANSCRIPT ==========
+            # Un transcript real tiene estas características:
+            # - Más de 800 caracteres de texto
+            # - Contiene frases típicas de discursos
+            # - No está dominado por texto de descripción de video
+            
+            # Palabras que indican que es un transcript (no descripción)
+            palabras_transcript = [
+                'good morning', 'good afternoon', 'thank you',
+                'governing council', 'monetary policy',
+                'inflation', 'economy', 'growth',
+                'interest rate', 'policy rate',
+                'I am pleased', 'it is my pleasure',
+                'let me', 'first', 'second', 'third',
+                'governing council decided', 'we are maintaining',
+                'the bank of canada today', 'our quarterly',
+                'as i noted', 'as we have said',
+                'let me turn to', 'i would like to',
+            ]
+            
+            # Palabras que indican que es solo descripción de video
+            palabras_video = [
+                'press conference', 'media availability', 'webcast',
+                'watch the video', 'video player', 'embed',
+                'streaming', 'live stream', 'recorded',
+                'youtube', 'vimeo', 'dailymotion',
+            ]
+            
+            # ========== 4. ANÁLISIS DEL TEXTO ==========
+            # Si el texto tiene menos de 500 caracteres, probablemente no es transcript
+            if len(text_clean) < 500:
+                print(f"      📄 Texto muy corto ({len(text_clean)} caracteres), no es transcript")
+                return False
+            
+            # Contar cuántas palabras de transcript aparecen
+            transcript_matches = 0
+            for palabra in palabras_transcript:
+                if palabra in text_clean.lower():
+                    transcript_matches += 1
+            
+            # Contar cuántas palabras de video aparecen
+            video_matches = 0
+            for palabra in palabras_video:
+                if palabra in text_clean.lower():
+                    video_matches += 1
+            
+            print(f"      📊 Análisis: {transcript_matches} palabras de transcript, {video_matches} palabras de video")
+            
+            # ========== 5. DECISIÓN ==========
+            # Si tiene al menos 3 palabras de transcript y más de 800 caracteres, es transcript
+            if transcript_matches >= 3 and len(text_clean) > 800:
+                return True
+            
+            # Si tiene más palabras de video que de transcript, es video
+            if video_matches > transcript_matches:
+                return False
+            
+            # Si tiene menos de 3 palabras de transcript, probablemente no es transcript
+            if transcript_matches < 3:
+                return False
+            
+            # Fallback: si el texto tiene más de 1000 caracteres y contiene frases de discurso
+            if len(text_clean) > 1000:
+                # Buscar frases típicas de inicio de discurso
+                frases_inicio = ['good morning', 'thank you', 'i am pleased', 'it is my pleasure']
+                for frase in frases_inicio:
+                    if frase in text_clean.lower():
+                        return True
+            
+            return False
+    
+    def extraer_autor_y_titulo_desde_pagina(url, titulo_lista):
+        """Extrae el autor y el título de la página individual"""
+        autor = None
+        titulo_limpio = titulo_lista
+        tiene_transcript = False
+        
         try:
-            if page == 1:
-                url = "https://www.bankofcanada.ca/press/speeches/"
-            else:
-                url = f"https://www.bankofcanada.ca/press/speeches/page/{page}/"
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code != 200:
+                return autor, titulo_limpio, False
             
-            print(f"📄 Procesando página {page}: {url}")
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            chrome_options = Options()
-            chrome_options.add_argument('--headless=new')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--window-size=1920,1080')
-            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            # === VERIFICAR SI TIENE TRANSCRIPT ===
+            tiene_transcript = tiene_transcript_o_texto(soup, url)
             
-            driver = webdriver.Chrome(options=chrome_options)
-            driver.get(url)
-            time.sleep(5)
+            # === OBTENER TÍTULO ===
+            h1 = soup.find('h1', class_='entry-title')
+            if h1:
+                titulo_limpio = h1.get_text(strip=True)
+                titulo_limpio = re.sub(r'\s+', ' ', titulo_limpio).strip()
             
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            driver.quit()
-            
-            articles = soup.find_all('div', class_=lambda c: c and ('mtt-result' in c or 'media' in c or 'entry' in c))
-            
-            if not articles:
-                articles = soup.find_all('article')
-            
-            if not articles:
-                print(f"   📭 No hay más artículos en página {page}")
-                break
-            
-            print(f"   📚 Artículos encontrados: {len(articles)}")
-            items_found = 0
-            
-            for art in articles:
-                h3 = art.find('h3', class_='media-heading')
-                if not h3:
-                    h3 = art.find('h3')
-                if not h3:
-                    continue
+            # === EXTRAER AUTOR ===
+            article = soup.find('article')
+            if article:
+                text = article.get_text()
+                match = re.search(r'(?:Governor|Senior Deputy Governor|Deputy Governor)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', text)
+                if match:
+                    autor = match.group(1).strip()
                 
-                a_tag = h3.find('a')
+                if not autor:
+                    match = re.search(r'by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)', text)
+                    if match:
+                        autor = match.group(1).strip()
+            
+            if not autor:
+                title_tag = soup.find('title')
+                if title_tag:
+                    title_text = title_tag.text
+                    match = re.search(r'by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', title_text)
+                    if match:
+                        autor = match.group(1).strip()
+            
+            if not autor:
+                page_text = soup.get_text()
+                if 'Tiff Macklem' in page_text:
+                    autor = 'Tiff Macklem'
+                elif 'Carolyn Rogers' in page_text:
+                    autor = 'Carolyn Rogers'
+                elif 'Sharon Kozicki' in page_text:
+                    autor = 'Sharon Kozicki'
+            
+            return autor, titulo_limpio, tiene_transcript
+            
+        except Exception as e:
+            print(f"      ⚠️ Error extrayendo autor: {e}")
+            return autor, titulo_limpio, False
+
+    try:
+        print("📡 Extrayendo discursos del Banco de Canadá...")
+        
+        url = "https://www.bankofcanada.ca/press/speeches/"
+        print(f"📄 Procesando página principal: {url}")
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            print(f"   ❌ Error HTTP: {response.status_code}")
+            return pd.DataFrame()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # ========== BUSCAR TODOS LOS ELEMENTOS ==========
+        articles = []
+        
+        articles.extend(soup.find_all('div', class_='mtt-result'))
+        articles.extend(soup.find_all('article'))
+        
+        main_content = soup.find('main') or soup.find('div', id='content') or soup.find('div', class_='content-area')
+        if main_content:
+            for div in main_content.find_all(['div', 'article', 'li'], recursive=True):
+                if div.find('a', href=True):
+                    has_date = div.find(string=re.compile(r'July|June|May|April|March|February|January|August|September|October|November|December', re.I))
+                    if has_date:
+                        articles.append(div)
+        
+        # Eliminar duplicados
+        seen = set()
+        unique_articles = []
+        for art in articles:
+            art_id = str(art)
+            if art_id not in seen:
+                seen.add(art_id)
+                unique_articles.append(art)
+        articles = unique_articles
+        
+        print(f"   📚 Elementos encontrados: {len(articles)}")
+        
+        items_found = 0
+        for art in articles:
+            try:
+                # === EXTRAER TÍTULO Y ENLACE ===
+                a_tag = None
+                
+                h3 = art.find('h3')
+                if h3:
+                    a_tag = h3.find('a')
+                
+                if not a_tag:
+                    h2 = art.find('h2')
+                    if h2:
+                        a_tag = h2.find('a')
+                
+                if not a_tag:
+                    for a in art.find_all('a', href=True):
+                        if len(a.get_text(strip=True)) > 15:
+                            a_tag = a
+                            break
+                
                 if not a_tag:
                     continue
                 
-                titulo_raw = a_tag.text.strip()
-                link = a_tag['href']
+                titulo_raw = a_tag.get_text(strip=True)
+                link = a_tag.get('href', '')
                 
+                if not link or not titulo_raw:
+                    continue
+                
+                if link.startswith('/'):
+                    link = "https://www.bankofcanada.ca" + link
+                
+                if link in seen_links:
+                    continue
+                seen_links.add(link)
+                
+                # === VERIFICAR SI ES UN DISCURSO LEGÍTIMO ===
+                if not es_discurso_legitimo(titulo_raw, link):
+                    print(f"      ⏭️ Excluido (no es discurso): {titulo_raw[:50]}...")
+                    continue
+                
+                # === EXTRAER FECHA ===
                 date_elem = art.find('span', class_='media-date')
                 if not date_elem:
                     date_elem = art.find('time')
                 if not date_elem:
                     date_elem = art.find(class_=re.compile(r'date', re.I))
                 
-                if not date_elem:
-                    continue
+                parsed_date = None
+                if date_elem:
+                    fecha_texto = date_elem.get_text(strip=True)
+                    try:
+                        parsed_date = parser.parse(fecha_texto)
+                        if parsed_date.tzinfo is not None:
+                            parsed_date = parsed_date.replace(tzinfo=None)
+                    except:
+                        pass
                 
-                try:
-                    fecha_texto = date_elem.text.strip()
-                    parsed_date = parser.parse(fecha_texto)
-                except:
+                if not parsed_date:
+                    art_text = art.get_text()
+                    match = re.search(r'([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})', art_text)
+                    if match:
+                        try:
+                            parsed_date = parser.parse(f"{match.group(1)} {match.group(2)}, {match.group(3)}")
+                            if parsed_date.tzinfo is not None:
+                                parsed_date = parsed_date.replace(tzinfo=None)
+                        except:
+                            pass
+                
+                if not parsed_date:
                     continue
                 
                 if parsed_date < start_date or parsed_date > end_date:
                     continue
                 
-                if any(r['Link'] == link for r in rows):
-                    continue
-                
                 print(f"   🔍 Procesando: {parsed_date.strftime('%Y-%m-%d')} - {titulo_raw[:50]}...")
                 
-                autor = None
+                # === EXTRAER AUTOR, TÍTULO Y VERIFICAR TRANSCRIPT ===
+                autor, titulo_limpio, tiene_transcript = extraer_autor_y_titulo_desde_pagina(link, titulo_raw)
                 
-                try:
-                    headers = {'User-Agent': 'Mozilla/5.0'}
-                    response = requests.get(link, headers=headers, timeout=10)
-                    if response.status_code == 200:
-                        soup_page = BeautifulSoup(response.text, 'html.parser')
-                        autor = extraer_autor_desde_html(soup_page, titulo_raw, link)
-                        if autor:
-                            print(f"      📝 Autor encontrado: {autor}")
-                except Exception as e:
-                    print(f"      ⚠️ Error obteniendo página: {e}")
+                # ========== FILTRO CRÍTICO: SI NO TIENE TRANSCRIPT, NO ES DISCURSO ==========
+                if not tiene_transcript:
+                    print(f"      ⏭️ Excluido (sin transcript): {titulo_raw[:50]}...")
+                    continue
                 
-                titulo_limpio = limpiar_titulo(titulo_raw)
-                
-                if autor:
-                    # Limpiar "Governor" del autor si está presente
-                    autor_limpio = re.sub(r'^Governor\s+', '', autor)
-                    titulo_final = f"{autor_limpio}: {titulo_limpio}"
+                # === CONSTRUIR TÍTULO FINAL ===
+                if autor and autor not in titulo_limpio:
+                    titulo_final = f"{autor}: {titulo_limpio}"
                 else:
                     titulo_final = titulo_limpio
                 
                 titulo_final = re.sub(r'\s+', ' ', titulo_final).strip()
+                titulo_final = re.sub(r'([a-z])([A-Z])', r'\1 \2', titulo_final)
                 
                 rows.append({
                     "Date": parsed_date,
@@ -5407,16 +5613,17 @@ def load_data_boc(start_date_str, end_date_str):
                 })
                 items_found += 1
                 print(f"      ✅ Agregado: {titulo_final[:80]}...")
-            
-            if items_found == 0:
-                break
-            
-            page += 1
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"   ⚠️ Error en página {page}: {e}")
-            break
+                
+            except Exception as e:
+                print(f"   ⚠️ Error procesando elemento: {e}")
+                continue
+        
+        print(f"   📊 Discursos encontrados: {items_found}")
+        
+    except Exception as e:
+        print(f"❌ Error en load_data_boc: {e}")
+        import traceback
+        traceback.print_exc()
     
     df = pd.DataFrame(rows)
     if not df.empty:
