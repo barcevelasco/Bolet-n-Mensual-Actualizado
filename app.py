@@ -2909,8 +2909,7 @@ def load_pub_inst_bm(start_date_str, end_date_str):
 @st.cache_data(show_spinner=False)
 def load_working_papers_fmi(start_date_str, end_date_str):
     """
-    Extractor FMI - Working Papers usando Crossref API
-    Los Working Papers del FMI tienen DOIs con prefix 10.5089
+    Extractor FMI - Working Papers usando la API de búsqueda del FMI (títulos completos)
     """
     import requests
     import datetime
@@ -2922,60 +2921,192 @@ def load_working_papers_fmi(start_date_str, end_date_str):
     try:
         start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
         end_date = datetime.datetime.strptime(end_date_str, '%d.%m.%Y')
-        print(f"📅 FMI Working Papers (Crossref API): {start_date.date()} a {end_date.date()}")
+        print(f"📅 FMI Working Papers (API de búsqueda FMI): {start_date.date()} a {end_date.date()}")
     except:
         start_date = datetime.datetime(2000, 1, 1)
         end_date = datetime.datetime.now()
 
     rows = []
     
-    # API de Crossref
-    url = "https://api.crossref.org/works"
-    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json"
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.imf.org/en/publications',
+        'Origin': 'https://www.imf.org',
     }
     
-    # Parámetros de búsqueda
+    # ========== USAR LA API DE BÚSQUEDA DEL FMI ==========
+    # Esta API devuelve los títulos completos de los working papers
+    # Nota: Solo funciona para publicaciones de los últimos meses
+    
+    # Construir la URL con los parámetros de búsqueda
+    # Filtrar por fecha y tipo de publicación
+    date_from = start_date.strftime('%Y-%m-%d')
+    date_to = end_date.strftime('%Y-%m-%d')
+    
+    # API de búsqueda del FMI
+    search_url = "https://www.imf.org/api/search/publications"
+    
+    params = {
+        "locale": "en",
+        "type": "WRKNGPPRS",  # Working Papers
+        "dateFrom": date_from,
+        "dateTo": date_to,
+        "pageSize": 200,
+        "sortBy": "date",
+        "sortOrder": "desc"
+    }
+    
+    try:
+        print(f"📡 Solicitando Working Papers a la API de búsqueda del FMI...")
+        response = requests.get(search_url, headers=headers, params=params, timeout=30, verify=False)
+        
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get('results', []) or data.get('items', []) or data.get('publications', [])
+            
+            if not items:
+                # Intentar otra estructura de la API
+                items = data.get('data', []) or data.get('list', [])
+            
+            print(f"📚 Documentos encontrados en la API: {len(items)}")
+            
+            for item in items:
+                # Extraer título
+                titulo = item.get('title', '')
+                if not titulo:
+                    titulo = item.get('name', '')
+                if not titulo:
+                    titulo = item.get('publicationTitle', '')
+                if not titulo:
+                    titulo = item.get('heading', '')
+                
+                # Extraer URL
+                link = item.get('url', '')
+                if not link:
+                    link = item.get('link', '')
+                if not link:
+                    link = item.get('publicationUrl', '')
+                if link and link.startswith('/'):
+                    link = "https://www.imf.org" + link
+                elif link and not link.startswith('http'):
+                    link = f"https://www.imf.org/en/Publications/WP/Issues/{link}"
+                
+                # Extraer DOI
+                doi = item.get('doi', '')
+                if not doi:
+                    doi = item.get('identifier', '')
+                if doi and not link:
+                    link = f"https://doi.org/{doi}"
+                
+                # Extraer fecha
+                fecha_texto = item.get('publicationDate', '')
+                if not fecha_texto:
+                    fecha_texto = item.get('date', '')
+                if not fecha_texto:
+                    fecha_texto = item.get('issued', '')
+                
+                parsed_date = None
+                if fecha_texto:
+                    try:
+                        parsed_date = parser.parse(fecha_texto)
+                        if parsed_date.tzinfo is not None:
+                            parsed_date = parsed_date.replace(tzinfo=None)
+                    except:
+                        pass
+                
+                if not parsed_date:
+                    # Intentar extraer fecha de la URL
+                    if link:
+                        match = re.search(r'/(\d{4})/(\d{2})/(\d{2})', link)
+                        if match:
+                            try:
+                                parsed_date = datetime.datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                            except:
+                                pass
+                
+                if not titulo or not link or not parsed_date:
+                    continue
+                
+                if start_date <= parsed_date <= end_date:
+                    if not any(r['Link'] == link for r in rows):
+                        rows.append({
+                            "Date": parsed_date,
+                            "Title": titulo,
+                            "Link": link,
+                            "Organismo": "FMI"
+                        })
+                        print(f"   ✅ {parsed_date.strftime('%Y-%m-%d')}: {titulo[:80]}...")
+                        
+        else:
+            print(f"⚠️ Error en API de búsqueda FMI: {response.status_code}")
+            print("   Intentando usar Crossref como fallback...")
+            
+            # ========== FALLBACK: Usar Crossref ==========
+            return load_working_papers_fmi_crossref(start_date_str, end_date_str)
+            
+    except Exception as e:
+        print(f"❌ Error en load_working_papers_fmi: {e}")
+        import traceback
+        traceback.print_exc()
+        print("   Intentando usar Crossref como fallback...")
+        return load_working_papers_fmi_crossref(start_date_str, end_date_str)
+    
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["Date"] = pd.to_datetime(df["Date"])
+        df = df.sort_values("Date", ascending=False)
+        df = df.drop_duplicates(subset=['Link'])
+    
+    print(f"\n📊 FMI Working Papers - Total final: {len(df)}")
+    return df
+
+
+def load_working_papers_fmi_crossref(start_date_str, end_date_str):
+    """
+    Fallback: Usar Crossref API para Working Papers del FMI
+    """
+    import requests
+    import datetime
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    try:
+        start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
+        end_date = datetime.datetime.strptime(end_date_str, '%d.%m.%Y')
+    except:
+        start_date = datetime.datetime(2000, 1, 1)
+        end_date = datetime.datetime.now()
+
+    rows = []
+    url = "https://api.crossref.org/works"
+    
     params = {
         "filter": f"from-pub-date:{start_date.strftime('%Y-%m-%d')},until-pub-date:{end_date.strftime('%Y-%m-%d')},prefix:10.5089",
-        "rows": 100,
+        "rows": 200,
         "sort": "published-online",
         "order": "desc"
     }
     
     try:
-        print(f"📡 Solicitando DOIs del FMI a Crossref API...")
-        
-        response = requests.get(url, headers=headers, params=params, timeout=30, verify=False)
-        
-        print(f"   Status Code: {response.status_code}")
+        print("   📡 Usando Crossref API como fallback...")
+        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, params=params, timeout=30, verify=False)
         
         if response.status_code == 200:
             data = response.json()
             items = data.get('message', {}).get('items', [])
             
-            print(f"📚 Documentos encontrados en Crossref: {len(items)}")
-            
             for item in items:
-                # Extraer título
                 titulo = item.get('title', [''])[0] if item.get('title') else ''
-                if not titulo:
-                    continue
-                
-                # Extraer DOI
                 doi = item.get('DOI', '')
-                if not doi:
+                if not doi or not titulo:
                     continue
                 
-                # Construir URL del DOI
                 link = f"https://doi.org/{doi}"
                 
-                # Extraer fecha
                 pub_date = item.get('published-print', {}) or item.get('published-online', {})
                 date_parts = pub_date.get('date-parts', [[]])[0]
-                
                 parsed_date = None
                 if len(date_parts) >= 3:
                     try:
@@ -2988,39 +3119,24 @@ def load_working_papers_fmi(start_date_str, end_date_str):
                     except:
                         pass
                 
-                if not parsed_date:
+                if not parsed_date or start_date > parsed_date or end_date < parsed_date:
                     continue
                 
-                # Verificar que sea Working Paper
-                container = item.get('container-title', [''])[0] if item.get('container-title') else ''
-                is_working_paper = 'working paper' in container.lower() or 'imf working' in container.lower()
-                
-                if not is_working_paper:
-                    is_working_paper = 'working paper' in titulo.lower()
-                
-                if not is_working_paper:
+                if 'working paper' not in titulo.lower() and 'working paper' not in str(item.get('container-title', [''])[0]).lower():
                     continue
                 
                 if "coming soon" in titulo.lower():
                     continue
                 
-                if start_date <= parsed_date <= end_date:
-                    if not any(r['Link'] == link for r in rows):
-                        rows.append({
-                            "Date": parsed_date,
-                            "Title": titulo,
-                            "Link": link,
-                            "Organismo": "FMI"
-                        })
-                        print(f"   ✅ {parsed_date.strftime('%Y-%m-%d')}: {titulo[:60]}...")
-                        
-        else:
-            print(f"❌ Error en Crossref API: {response.status_code}")
-            
+                if not any(r['Link'] == link for r in rows):
+                    rows.append({
+                        "Date": parsed_date,
+                        "Title": titulo,
+                        "Link": link,
+                        "Organismo": "FMI"
+                    })
     except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"   ❌ Error en fallback de Crossref: {e}")
     
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -3028,7 +3144,6 @@ def load_working_papers_fmi(start_date_str, end_date_str):
         df = df.sort_values("Date", ascending=False)
         df = df.drop_duplicates(subset=['Link'])
     
-    print(f"📊 FMI Working Papers - Total final: {len(df)}")
     return df
 
 
