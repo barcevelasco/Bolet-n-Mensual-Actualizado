@@ -19,6 +19,7 @@ import urllib.parse # Necesario para la herramienta de rescate
 import cloudscraper  # Para bypass de Cloudflare en BID
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+st.cache_data.clear()
 
 # ==========================================
 # MAPEO DE FUENTES ORIGINALES PARA AUDITORÍA (CON ENLACES)
@@ -515,10 +516,20 @@ def clean_author_name(name):
     minusc = ['de', 'van', 'von', 'der', 'del', 'la']
     words = name.strip().split()
     
-    # Capitaliza todo excepto las preposiciones europeas
-    cleaned_words = [w.capitalize() if w.lower() not in minusc else w.lower() for w in words]
+    cleaned_words = []
+    for w in words:
+        # Si tiene guión (ej. "Köhler-Geib"), capitalizar CADA parte
+        if '-' in w:
+            parts = w.split('-')
+            parts = [p.capitalize() for p in parts]
+            cleaned_words.append('-'.join(parts))
+        elif w.lower() in minusc:
+            cleaned_words.append(w.lower())
+        else:
+            cleaned_words.append(w.capitalize())
+    
     if cleaned_words:
-        cleaned_words[0] = cleaned_words[0].capitalize() # La primera siempre mayúscula
+        cleaned_words[0] = cleaned_words[0].capitalize()
         
     cleaned = " ".join(cleaned_words)
     # Arreglar iniciales pegadas (ej. "J.M. Keynes" -> "J. M. Keynes")
@@ -4669,12 +4680,14 @@ def load_data_bis(use_event_date=False, target_year=None, target_month=None):
     
     return df
 
-
+### -- Discursos - Banco Alemán - 
 @st.cache_data(show_spinner=False)
-def load_data_bbk(start_date_str, end_date_str):
+def load_data_bbk(start_date_str, end_date_str, _refresh=False):
+    print("🔴🔴🔴 EJECUTANDO load_data_bbk (NUEVA EJECUCIÓN) 🔴🔴🔴")
     base_url = "https://www.bundesbank.de/action/en/730564/bbksearch"
     headers = {'User-Agent': 'Mozilla/5.0'}
     rows, page = [], 0
+
     while True:
         params = {'sort': 'bbksortdate desc', 'dateFrom': start_date_str,
                   'dateTo': end_date_str, 'pageNumString': str(page)}
@@ -4704,14 +4717,34 @@ def load_data_bbk(start_date_str, end_date_str):
                     titulo = a_tag.find(
                         'span', class_='link__label').text.strip()
                     
-            # ========== 🔽 FILTRO ANTI-ALEMÁN - VA AQUÍ 🔽 ==========
-            # Excluir publicaciones en alemán por URL
+            # ========== 🔽 FILTRO ANTI-ALEMÁN ==========
             if '/de/' in link or 'german' in link.lower():
                 print(f"  🚫 Excluido (URL en alemán): {titulo[:50] if titulo else 'sin título'}...")
                 continue
-            # ========== 🔼 FILTRO ANTI-ALEMÁN - VA AQUÍ 🔼 ==========
+            # ========== 🔼 FILTRO ANTI-ALEMÁN ==========
+            
+            # Formatear el título (reemplazar guiones y capitalizar)
+            titulo = titulo.replace(' - ', ': ')
+            partes = titulo.split(': ')
+            partes_formateadas = []
+            for parte in partes:
+                if parte.strip():
+                    words = parte.split()
+                    if words:
+                        words[0] = words[0].capitalize()
+                        minor_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'by', 'in', 'of', 'up', 'for'}
+                        for j in range(1, len(words)):
+                            if words[j].lower() not in minor_words:
+                                words[j] = words[j].capitalize()
+                            else:
+                                words[j] = words[j].lower()
+                        partes_formateadas.append(' '.join(words))
+            titulo = ': '.join(partes_formateadas)
+            
+            # Agregar autor si existe (ya capitalizado por clean_author_name)
             if author_str and author_str not in titulo:
                 titulo = f"{author_str}: {titulo}"
+            
             if fecha_str and titulo:
                 rows.append({"Date": fecha_str, "Title": titulo,
                             "Link": link, "Organismo": "BBk (Alemania)"})
@@ -4725,6 +4758,7 @@ def load_data_bbk(start_date_str, end_date_str):
             df["Date"], format='%d.%m.%Y', errors='coerce')
         df = df.sort_values("Date", ascending=False)
     return df
+
 
 ## Discursos - Banco de China - PBoC
 @st.cache_data(show_spinner=False)
@@ -7172,7 +7206,7 @@ if modo_app == "Boletín":
                     elif org == "FMI":
                         df = load_discursos_fmi(sd, ed)
                     elif org == "BBk (Alemania)":
-                        df = load_data_bbk(sd, ed)
+                        df = load_data_bbk(sd, ed, _refresh=True)
                     elif org == "Fed (Estados Unidos)":
                         df = load_data_fed(a_num)
                     elif org == "BdF (Francia)":
@@ -7427,7 +7461,7 @@ if modo_app == "Boletín":
                 # --- PREPARACIÓN PARA EL WORD (Orden Institucional) ---
                 df_rep = f_df[f_df['Categoría'] == "Reportes"].copy()
                 df_pub = f_df[f_df['Categoría'] ==
-                              "Publicaciones Institucionales"].copy()
+                            "Publicaciones Institucionales"].copy()
                 df_inv = f_df[f_df['Categoría'] == "Investigación"].copy()
                 df_disc = f_df[f_df['Categoría'] == "Discursos"].copy()
 
@@ -7447,7 +7481,41 @@ if modo_app == "Boletín":
                 f_df_word = pd.concat(
                     [df_rep, df_pub, df_inv, df_disc], ignore_index=True)
                 f_df_word = f_df_word[['Categoría',
-                                       'Organismo', 'Title', 'Link']]
+                                    'Organismo', 'Title', 'Link']]
+
+                # 🆕 APLICAR CORRECCIÓN DE FORMATO ANTES DE RENOMBRAR
+                f_df_word['Title'] = f_df_word['Title'].apply(formatear_titulo_final)
+
+                f_df_word = f_df_word.rename(
+                    columns={"Categoría": "Tipo de Documento", "Title": "Nombre de Documento"})
+                def formatear_titulo_final(titulo):
+                    """Convierte 'texto - texto' a 'Texto: Texto' con mayúsculas correctas."""
+                    if not titulo:
+                        return titulo
+                    # 1. Reemplazar ' - ' por ': '
+                    titulo = titulo.replace(' - ', ': ')
+                    # 2. Dividir por ': ' (puede haber múltiples)
+                    partes = titulo.split(': ')
+                    # 3. Capitalizar cada parte
+                    def titlecase_word(word):
+                        minor_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'by', 'in', 'of', 'up', 'for'}
+                        if word.lower() in minor_words:
+                            return word.lower()
+                        return word.capitalize()
+                    partes_formateadas = []
+                    for i, parte in enumerate(partes):
+                        if parte.strip():
+                            words = parte.split()
+                            if words:
+                                words[0] = words[0].capitalize()
+                                for j in range(1, len(words)):
+                                    words[j] = titlecase_word(words[j])
+                                partes_formateadas.append(' '.join(words))
+                    return ': '.join(partes_formateadas)
+
+                # Aplicar la corrección a todos los títulos
+                f_df_word['Title'] = f_df_word['Title'].apply(formatear_titulo_final)
+
                 f_df_word = f_df_word.rename(
                     columns={"Categoría": "Tipo de Documento", "Title": "Nombre de Documento"})
 
@@ -7469,6 +7537,7 @@ if modo_app == "Boletín":
                 disp = disp.sort_values(
                     by="Date", ascending=False)  # Orden cronológico
                 disp["Fecha"] = disp["Date"].dt.strftime('%d/%m/%Y')
+                disp["Title"] = disp["Title"].apply(formatear_titulo_final)
                 disp["Nombre de Documento"] = disp.apply(
                     lambda x: f"[{x['Title']}]({x['Link']})", axis=1)
                 disp = disp.rename(columns={"Categoría": "Tipo de Documento"})
@@ -7788,6 +7857,31 @@ if modo_app == "Boletín":
 
                     # Preparar DataFrame para Word
                     df_word = f_df[['Categoría', 'Organismo', 'ID Enlace', 'Nombre Fuente', 'Origen', 'Enlace ID', 'Date', 'Title', 'Link']].copy()
+
+                    # 🆕 APLICAR CORRECCIÓN DE FORMATO A LOS TÍTULOS
+                    def formatear_titulo_final(titulo):
+                        if not titulo:
+                            return titulo
+                        titulo = titulo.replace(' - ', ': ')
+                        partes = titulo.split(': ')
+                        def titlecase_word(word):
+                            minor_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'by', 'in', 'of', 'up', 'for'}
+                            if word.lower() in minor_words:
+                                return word.lower()
+                            return word.capitalize()
+                        partes_formateadas = []
+                        for i, parte in enumerate(partes):
+                            if parte.strip():
+                                words = parte.split()
+                                if words:
+                                    words[0] = words[0].capitalize()
+                                    for j in range(1, len(words)):
+                                        words[j] = titlecase_word(words[j])
+                                    partes_formateadas.append(' '.join(words))
+                        return ': '.join(partes_formateadas)
+
+                    df_word['Title'] = df_word['Title'].apply(formatear_titulo_final)
+
                     df_word = df_word.rename(columns={
                         'Date': 'Fecha',
                         'Title': 'Nombre de Documento',
