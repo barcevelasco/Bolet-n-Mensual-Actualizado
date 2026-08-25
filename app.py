@@ -537,29 +537,42 @@ def clean_author_name(name):
     return cleaned
 
 def formatear_titulo_final(titulo):
-    """Convierte 'texto - texto' a 'Texto: Texto' con mayúsculas correctas."""
+    """
+    Capitaliza SOLO la primera letra de cada sección principal (antes de los guiones),
+    manteniendo el resto del texto en minúsculas (excepto nombres propios ya capitalizados).
+    
+    Ejemplo: "Fritzi Köhler-Geib: Intangible investment and the economy - a central banking perspective"
+    → "Fritzi Köhler-Geib: Intangible investment and the economy - a central banking perspective"
+    """
     if not titulo:
         return titulo
-    # 1. Reemplazar ' - ' por ': '
-    titulo = titulo.replace(' - ', ': ')
-    # 2. Dividir por ': ' (puede haber múltiples)
-    partes = titulo.split(': ')
-    # 3. Capitalizar cada parte
-    def titlecase_word(word):
-        minor_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'by', 'in', 'of', 'up', 'for'}
-        if word.lower() in minor_words:
-            return word.lower()
-        return word.capitalize()
+    
+    # 1. Dividir por ' - ' para manejar el subtítulo por separado
+    partes = titulo.split(' - ')
+    
     partes_formateadas = []
     for i, parte in enumerate(partes):
         if parte.strip():
-            words = parte.split()
-            if words:
-                words[0] = words[0].capitalize()
-                for j in range(1, len(words)):
-                    words[j] = titlecase_word(words[j])
-                partes_formateadas.append(' '.join(words))
-    return ': '.join(partes_formateadas)
+            # 2. Dividir por ': ' para separar autor del título
+            subpartes = parte.split(': ')
+            
+            subpartes_formateadas = []
+            for j, subparte in enumerate(subpartes):
+                if subparte.strip():
+                    if j == 0:
+                        # Autor - mantener como está (ya está bien capitalizado)
+                        subpartes_formateadas.append(subparte)
+                    else:
+                        # Título - capitalizar SOLO la primera letra
+                        if subparte:
+                            # Primera letra mayúscula, el resto en minúsculas
+                            subparte_formateada = subparte[0].upper() + subparte[1:].lower() if len(subparte) > 1 else subparte.upper()
+                            subpartes_formateadas.append(subparte_formateada)
+            
+            partes_formateadas.append(': '.join(subpartes_formateadas))
+    
+    # Unir con ' - ' (conservando el guión)
+    return ' - '.join(partes_formateadas)
 
 # ==========================================
 # FUNCIONES DE EXTRACCIÓN (BACKEND)
@@ -4152,6 +4165,13 @@ def load_discursos_boe(start_date_str, end_date_str):
             titulo_limpio = re.sub(r'(?i)\s+by\s+.*$', '', title).strip()
             return autor, titulo_limpio
         
+        # Patrón 5: "Título by Autor" (con iniciales como "L." o "J.M.")
+        match = re.search(r'(?i)\s+by\s+([A-Z][a-z]+(?:\s+[A-Z]\.(?:\s+[A-Z][a-z]+)?)?(?:\s+[A-Z][a-z]+)?)$', title)
+        if match:
+            autor = clean_author_name(match.group(1).strip())
+            titulo_limpio = re.sub(r'(?i)\s+by\s+.*$', '', title).strip()
+            return autor, titulo_limpio
+
         return None, title
 
     try:
@@ -4176,6 +4196,14 @@ def load_discursos_boe(start_date_str, end_date_str):
                     continue
 
                 if start_date <= parsed_date <= end_date:
+                    print(f"📝 Procesando: {parsed_date.strftime('%Y-%m-%d')} - {titulo_raw}")
+                    
+                    autor, titulo_limpio = extract_author_from_title(titulo_raw)
+                    
+                    # Mostrar resultados de la extracción
+                    print(f"   Autor extraído: {autor}")
+                    print(f"   Título limpio: {titulo_limpio}")
+
                     # Extraer autor y título limpio
                     autor, titulo_limpio = extract_author_from_title(titulo_raw)
                     
