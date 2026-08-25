@@ -536,7 +536,30 @@ def clean_author_name(name):
     cleaned = re.sub(r'\b([A-Z])\.\s*([A-Z])', lambda m: f"{m.group(1)}. {m.group(2)}", cleaned)
     return cleaned
 
-
+def formatear_titulo_final(titulo):
+    """Convierte 'texto - texto' a 'Texto: Texto' con mayúsculas correctas."""
+    if not titulo:
+        return titulo
+    # 1. Reemplazar ' - ' por ': '
+    titulo = titulo.replace(' - ', ': ')
+    # 2. Dividir por ': ' (puede haber múltiples)
+    partes = titulo.split(': ')
+    # 3. Capitalizar cada parte
+    def titlecase_word(word):
+        minor_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'by', 'in', 'of', 'up', 'for'}
+        if word.lower() in minor_words:
+            return word.lower()
+        return word.capitalize()
+    partes_formateadas = []
+    for i, parte in enumerate(partes):
+        if parte.strip():
+            words = parte.split()
+            if words:
+                words[0] = words[0].capitalize()
+                for j in range(1, len(words)):
+                    words[j] = titlecase_word(words[j])
+                partes_formateadas.append(' '.join(words))
+    return ': '.join(partes_formateadas)
 
 # ==========================================
 # FUNCIONES DE EXTRACCIÓN (BACKEND)
@@ -7477,48 +7500,15 @@ if modo_app == "Boletín":
                 if not df_disc.empty:
                     df_disc = df_disc.sort_values(
                         by=["Title"], ascending=[True])
+                    df_disc['Title'] = df_disc['Title'].apply(formatear_titulo_final)
 
                 f_df_word = pd.concat(
                     [df_rep, df_pub, df_inv, df_disc], ignore_index=True)
-                f_df_word = f_df_word[['Categoría',
-                                    'Organismo', 'Title', 'Link']]
-
-                # 🆕 APLICAR CORRECCIÓN DE FORMATO ANTES DE RENOMBRAR
-                f_df_word['Title'] = f_df_word['Title'].apply(formatear_titulo_final)
+                f_df_word = f_df_word[['Categoría', 'Organismo', 'Title', 'Link']]
 
                 f_df_word = f_df_word.rename(
                     columns={"Categoría": "Tipo de Documento", "Title": "Nombre de Documento"})
-                def formatear_titulo_final(titulo):
-                    """Convierte 'texto - texto' a 'Texto: Texto' con mayúsculas correctas."""
-                    if not titulo:
-                        return titulo
-                    # 1. Reemplazar ' - ' por ': '
-                    titulo = titulo.replace(' - ', ': ')
-                    # 2. Dividir por ': ' (puede haber múltiples)
-                    partes = titulo.split(': ')
-                    # 3. Capitalizar cada parte
-                    def titlecase_word(word):
-                        minor_words = {'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'by', 'in', 'of', 'up', 'for'}
-                        if word.lower() in minor_words:
-                            return word.lower()
-                        return word.capitalize()
-                    partes_formateadas = []
-                    for i, parte in enumerate(partes):
-                        if parte.strip():
-                            words = parte.split()
-                            if words:
-                                words[0] = words[0].capitalize()
-                                for j in range(1, len(words)):
-                                    words[j] = titlecase_word(words[j])
-                                partes_formateadas.append(' '.join(words))
-                    return ': '.join(partes_formateadas)
-
-                # Aplicar la corrección a todos los títulos
-                f_df_word['Title'] = f_df_word['Title'].apply(formatear_titulo_final)
-
-                f_df_word = f_df_word.rename(
-                    columns={"Categoría": "Tipo de Documento", "Title": "Nombre de Documento"})
-
+                
                 st.success(
                     f"Se consolidaron **{len(f_df)}** documentos en total.")
                 word = generate_word(f_df_word, subtitle=", ".join(
