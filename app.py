@@ -955,151 +955,140 @@ def load_reportes_bpi(start_date_str, end_date_str):
 ## Reportes BM 
 @st.cache_data(show_spinner=False)
 def load_reportes_bm(start_date_str, end_date_str):
-    """
-    Extractor para Reportes del BM usando API de DSpace
-    """
-    base_url = "https://openknowledge.worldbank.org/server/api/discover/search/objects"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    """Extractor para Reportes del BM usando API de DSpace filtrando por doctype."""
+    base_url = (
+        "https://openknowledge.worldbank.org/server/api/discover/search/objects"
+    )
+    headers = {"User-Agent": "Mozilla/5.0"}
+    scope_id = "06251f8a-62c2-59fb-add5-ec0993fc20d9"
 
-    # ID exacto de la comunidad de Publicaciones
-    scope_id = '06251f8a-62c2-59fb-add5-ec0993fc20d9'
 
     try:
-        start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
-        end_date = datetime.datetime.strptime(end_date_str, '%d.%m.%Y')
+        start_date = datetime.datetime.strptime(start_date_str, "%d.%m.%Y")
+        end_date = datetime.datetime.strptime(end_date_str, "%d.%m.%Y")
         print(f"📅 BM Reportes: {start_date.date()} a {end_date.date()}")
-    except:
+    except Exception:
         start_date = datetime.datetime(2000, 1, 1)
         end_date = datetime.datetime.now()
 
-    # Palabras clave para identificar reportes (ampliadas)
-    palabras_reporte = [
-        r'\breport\b', r'\boutlook\b', r'\bprospects\b', r'\bupdate\b',
-        r'\breview\b', r'\bmonitor\b', r'\bbulletin\b', r'\boverview\b',
-        r'\bassessment\b', r'\banalysis\b', r'\bforecast\b', r'\btrends?\b',
-        r'\bdevelopments?\b', r'\bglobal economic\b', r'\bcommodity markets\b',
-        r'\beconomic\s+report\b', r'\bcountry\s+update\b', r'\bquarterly\b',
-        r'\bannual\s+report\b', r'\bglobal\s+development\b', r'\bmacroeconomic\b',
-        r'\bfiscal\s+update\b', r'\bpolicy\s+note\b', r'\bworking\s+paper\b',
-        r'\bdiscussion\s+paper\b', r'\bpolicy\s+research\s+working\s+paper\b'
-    ]
 
     rows = []
     page = 0
-    max_pages = 10  # Aumentado para capturar más
-    
+    max_pages = 10
+
+
     while page < max_pages:
         try:
-            # Aumentar size a 50 para capturar más por página
             params = {
-                'scope': scope_id,
-                'sort': 'dc.date.issued,DESC',
-                'page': page,
-                'size': 50
+                "scope": scope_id,
+                "sort": "dc.date.issued,DESC",
+                "page": page,
+                "size": 50,
+                "f.doctype": "Report,equals",  # Filtro nativo de DSpace
             }
-            res = requests.get(base_url, headers=headers, params=params, timeout=15)
+            res = requests.get(
+                base_url, headers=headers, params=params, timeout=15
+            )
             data = res.json()
 
-            objects = data.get('_embedded', {}).get(
-                'searchResult', {}).get('_embedded', {}).get('objects', [])
-            
+
+            objects = (
+                data.get("_embedded", {})
+                .get("searchResult", {})
+                .get("_embedded", {})
+                .get("objects", [])
+            )
+
+
             if not objects:
                 print(f"📭 No hay más resultados en página {page}")
                 break
 
+
             print(f"📄 Página {page + 1}: {len(objects)} objetos encontrados")
-            
+
+
             items_found = 0
             for obj in objects:
-                item = obj.get('_embedded', {}).get('indexableObject', {})
-                meta = item.get('metadata', {})
+                item = obj.get("_embedded", {}).get("indexableObject", {})
+                meta = item.get("metadata", {})
+
 
                 # Extraer Título
-                title = meta.get('dc.title', [{'value': ''}])[0].get('value', '')
+                title = (
+                    meta.get("dc.title", [{"value": ""}])[0].get("value", "")
+                )
                 if not title:
                     continue
-                
+
+
                 # Extraer Fecha
-                date_s = meta.get('dc.date.issued', [{'value': ''}])[0].get('value', '')
+                date_s = (
+                    meta.get("dc.date.issued", [{"value": ""}])[0].get(
+                        "value", ""
+                    )
+                )
                 if not date_s:
                     continue
-                    
+
+
                 try:
                     parsed_date = parser.parse(date_s)
                     if parsed_date.tzinfo is not None:
                         parsed_date = parsed_date.replace(tzinfo=None)
-                except:
+                except Exception:
                     continue
 
+
+                # Filtrar rango de fechas
                 if parsed_date < start_date or parsed_date > end_date:
                     continue
-                
-                # Revisión de resultados 
-                print(f"   📄 {parsed_date.date()} - {title[:80]}...")
 
-                # ========== FILTRO MEJORADO ==========
-                es_reporte = False
-                
-                # 1. Revisar título
-                for palabra in palabras_reporte:
-                    if re.search(palabra, title.lower()):
-                        es_reporte = True
-                        break
-                
-                # 2. Si no está en título, revisar descripción
-                if not es_reporte:
-                    abstract_list = meta.get('dc.description.abstract', [])
-                    desc_list = meta.get('dc.description', [])
-                    description = ""
-                    if abstract_list:
-                        description = abstract_list[0].get('value', '').lower()
-                    elif desc_list:
-                        description = desc_list[0].get('value', '').lower()
-                    
-                    for palabra in palabras_reporte:
-                        if re.search(palabra, description):
-                            es_reporte = True
-                            break
-                
-                # 3. Si no es reporte, saltar
-                #if not es_reporte:
-                #    continue
-                # ==================================(ESTE COMMENT evita que filtre innecesariamente todo el listado disponible)
 
                 # Link permanente
-                link = meta.get('dc.identifier.uri', [{'value': ''}])[0].get('value', '')
+                link = (
+                    meta.get("dc.identifier.uri", [{"value": ""}])[0].get(
+                        "value", ""
+                    )
+                )
                 if not link:
                     link = f"https://openknowledge.worldbank.org/entities/publication/{item.get('id', '')}"
 
-                if not any(r['Link'] == link for r in rows):
+
+                if not any(r["Link"] == link for r in rows):
                     rows.append({
-                        "Date": parsed_date, 
+                        "Date": parsed_date,
                         "Title": title,
-                        "Link": link, 
-                        "Organismo": "BM"
+                        "Link": link,
+                        "Organismo": "BM",
                     })
                     items_found += 1
                     print(f"   ✅ {parsed_date.date()} - {title[:60]}...")
 
+
             print(f"   📊 Documentos en página {page + 1}: {items_found}")
-            
-            # Si no encontramos nada en 2 páginas consecutivas, paramos
+
+
             if items_found == 0 and page > 1:
                 break
-                
+
+
             page += 1
             time.sleep(0.5)
-            
+
+
         except Exception as e:
             print(f"⚠️ Error en página {page}: {e}")
             break
+
 
     df = pd.DataFrame(rows)
     if not df.empty:
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.sort_values("Date", ascending=False)
-        df = df.drop_duplicates(subset=['Link'])
-    
+        df = df.drop_duplicates(subset=["Link"])
+
+
     print(f"✅ BM Reportes - Total: {len(df)} documentos")
     return df
 
@@ -3834,117 +3823,138 @@ def load_investigacion_fmi(start_date_str, end_date_str):
 
 @st.cache_data(show_spinner=False)
 def load_investigacion_bm(start_date_str, end_date_str):
-    """Extractor para Investigación del BM (Filtra y excluye los que son 'Reports')"""
+    """Extractor para Investigación del BM (working papers) vía API de DSpace,
+    filtrando por doctype con el facet nativo del repositorio."""
     base_url = "https://openknowledge.worldbank.org/server/api/discover/search/objects"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    scope_id = "06251f8a-62c2-59fb-add5-ec0993fc20d9"
 
-    # ID exacto de la comunidad de Investigación
-    scope_id = '06251f8a-62c2-59fb-add5-ec0993fc20d9'
+    DOCTYPES_INVESTIGACION = [
+    "Policy Research Working Paper",
+    "Working Paper (Numbered Series)",
+    "Working Paper",
+]
 
     try:
-        start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
-    except:
+        start_date = datetime.datetime.strptime(start_date_str, "%d.%m.%Y")
+        end_date = datetime.datetime.strptime(end_date_str, "%d.%m.%Y")
+        print(f"📅 BM Investigación: {start_date.date()} a {end_date.date()}")
+    except Exception:
         start_date = datetime.datetime(2000, 1, 1)
+        end_date = datetime.datetime.now()
 
-    rows, page = [], 0
-    while True:
-        try:
-            params = {
-                'scope': scope_id,
-                'sort': 'dc.date.issued,DESC',
-                'page': page,
-                'size': 20
-            }
-            res = requests.get(base_url, headers=headers,
-                               params=params, timeout=15)
-            data = res.json()
+    def _fetch(doctypes):
+        """Pagina la búsqueda para una o varias etiquetas de doctype."""
+        rows, seen = [], set()
+        page, max_pages = 0, 10
 
-            objects = data.get('_embedded', {}).get(
-                'searchResult', {}).get('_embedded', {}).get('objects', [])
-            if not objects:
-                break
+        while page < max_pages:
+            try:
+                params = [
+                    ("scope", scope_id),
+                    ("sort", "dc.date.issued,DESC"),
+                    ("page", page),
+                    ("size", 50),
+                    *[("f.doctype", f"{d},equals") for d in doctypes],
+                ]
+                # quote_via=quote -> espacio como %20 ; safe="," -> la coma de ",equals" intacta
+                qs = urlencode(params, quote_via=quote, safe=",")
+                res = requests.get(base_url, headers=headers, params=qs, timeout=15)
+                print(f"🔗 [{res.status_code}] {res.url}")
+                res.raise_for_status()
+                data = res.json()
 
-            items_found = 0
-            for obj in objects:
-                item = obj.get('_embedded', {}).get('indexableObject', {})
-                meta = item.get('metadata', {})
+                objects = (
+                    data.get("_embedded", {})
+                    .get("searchResult", {})
+                    .get("_embedded", {})
+                    .get("objects", [])
+                )
+                if not objects:
+                    print(f"📭 Sin resultados en página {page}")
+                    break
 
-                # Extraer Título y Fecha
-                title = meta.get('dc.title', [{'value': ''}])[
-                    0].get('value', '')
-                date_s = meta.get('dc.date.issued', [{'value': ''}])[
-                    0].get('value', '')
+                print(f"📄 Página {page + 1}: {len(objects)} objetos")
 
-                parsed_date = None
-                if date_s:
+                items_found = 0
+                for obj in objects:
+                    item = obj.get("_embedded", {}).get("indexableObject", {})
+                    meta = item.get("metadata", {})
+
+                    title = meta.get("dc.title", [{"value": ""}])[0].get("value", "")
+                    if not title:
+                        continue
+
+                    date_s = meta.get("dc.date.issued", [{"value": ""}])[0].get("value", "")
+                    if not date_s:
+                        continue
+
                     try:
                         parsed_date = parser.parse(date_s)
-                    except:
-                        pass
+                        if parsed_date.tzinfo is not None:
+                            parsed_date = parsed_date.replace(tzinfo=None)
+                    except Exception:
+                        continue
 
-                if not parsed_date or parsed_date < start_date:
-                    continue
+                    if parsed_date < start_date or parsed_date > end_date:
+                        continue
 
-                # --- NUEVO FILTRO ANTI-REPORTES ---
-                # Buscamos en el abstract o en la descripción general
-                abstract_list = meta.get('dc.description.abstract', [])
-                desc_list = meta.get('dc.description', [])
+                    link = meta.get("dc.identifier.uri", [{"value": ""}])[0].get("value", "")
+                    if not link:
+                        link = (
+                            "https://openknowledge.worldbank.org/entities/publication/"
+                            f"{item.get('id', '')}"
+                        )
 
-                description = ""
-                if abstract_list:
-                    description = abstract_list[0].get('value', '').lower()
-                elif desc_list:
-                    description = desc_list[0].get('value', '').lower()
+                    if link in seen:
+                        continue
+                    seen.add(link)
 
-                # Si la palabra exacta "report" está en la descripción, lo saltamos
-                # Usamos \b para que sea la palabra exacta y no algo como "reporting"
-                if re.search(r'\breport\b', description):
-                    continue
-                # ----------------------------------
-
-                # Link permanente
-                link = meta.get('dc.identifier.uri', [{'value': ''}])[
-                    0].get('value', '')
-                if not link:
-                    link = f"https://openknowledge.worldbank.org/entities/publication/{item.get('id', '')}"
-
-                if not any(r['Link'] == link for r in rows):
-                    rows.append({"Date": parsed_date, "Title": title,
-                                "Link": link, "Organismo": "BM"})
+                    rows.append({
+                        "Date": parsed_date,
+                        "Title": title,
+                        "Link": link,
+                        "Organismo": "BM",
+                    })
                     items_found += 1
+                    print(f"   ✅ {parsed_date.date()} - {title[:60]}...")
 
-            if items_found == 0:
+                print(f"   📊 Documentos en página {page + 1}: {items_found}")
+
+                if items_found == 0 and page > 1:
+                    break
+
+                page += 1
+                time.sleep(0.5)
+
+            except Exception as e:
+                print(f"⚠️ Error en página {page}: {type(e).__name__}: {e}")
                 break
-            page += 1
-            if page > 3:
-                break  # Límite para evitar búsquedas infinitas
-            time.sleep(0.2)
-        except:
-            break
+
+        return rows
+
+    # Intento 1: los tres doctypes en una sola query (facets repetidos = OR en DSpace)
+    rows = _fetch(DOCTYPES_INVESTIGACION)
+
+    # Intento 2 (respaldo): si el OR no funciona, una petición por doctype
+    if not rows:
+        print("↩️ Query combinada vacía; reintentando doctype por doctype")
+        for d in DOCTYPES_INVESTIGACION:
+            print(f"— doctype: {d}")
+            rows.extend(_fetch([d]))
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        # 🔧 1. Convertir a datetime y FORZAR eliminación de timezone
-        df["Date"] = pd.to_datetime(df["Date"], errors='coerce', utc=False)
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
         if df["Date"].dt.tz is not None:
             df["Date"] = df["Date"].dt.tz_localize(None)
-        
-        # 🔧 2. Eliminar filas con fecha inválida
-        df = df.dropna(subset=['Date'])
-        
-        # 🔧 3. Eliminar duplicados por Link (importante)
-        df = df.drop_duplicates(subset=['Link'])
-        
-        # 🔧 4. Ordenar por fecha descendente
+        df = df.dropna(subset=["Date"])
+        df = df.drop_duplicates(subset=["Link"])
         df = df.sort_values("Date", ascending=False)
-        
-        # 🔧 5. DEPURACIÓN (opcional, pero ayuda a detectar problemas)
-        print(f"📊 BM Investigación - Total después de limpieza: {len(df)}")
-        if not df.empty:
-            print(f"   📅 Meses en los datos: {sorted(df['Date'].dt.month.unique())}")
-            print(f"   📅 Años en los datos: {sorted(df['Date'].dt.year.unique())}")
-    
+
+    print(f"✅ BM Investigación - Total: {len(df)} documentos")
     return df
+
 
 ## OCDE - INVESTIGACION
 
@@ -4381,174 +4391,230 @@ def load_discursos_fmi(start_date_str, end_date_str):
 @st.cache_data(show_spinner=False)
 def load_data_ecb(start_date_str, end_date_str):
     """
-    Extractor ECB (Europa) - Prioriza URLs con hash
+    Extractor ECB (Europa) - Basado en API FOEDB
+    VERSIÓN QUE FUNCIONA - con apellidos completos
     """
+    import requests
     import datetime
     import re
     import time
-    from bs4 import BeautifulSoup
+    import json
+    from dateutil import parser
     import pandas as pd
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
 
     try:
         start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
         end_date = datetime.datetime.strptime(end_date_str, '%d.%m.%Y')
-        print(f"📅 ECB (Europa): {start_date.date()} a {end_date.date()}")
+        print(f"📅 ECB (Europa) - API: {start_date.date()} a {end_date.date()}")
     except:
         start_date = datetime.datetime(2025, 1, 1)
         end_date = datetime.datetime.now()
 
     rows = []
-    seen_titles = set()
-    
-    year = start_date.year
-    month = start_date.month
-    
-    meses = {
-        'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
-        'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
-        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
-        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Origin': 'https://www.ecb.europa.eu',
+        'Referer': 'https://www.ecb.europa.eu/press/pubbydate/html/index.en.html',
     }
-    
-    print("   🚀 Extrayendo discursos del ECB...")
-    
+
     try:
-        chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        # ========== PASO 1: Obtener versiones ==========
+        print("   📡 Obteniendo versiones de publications.en...")
+        versions_url = "https://www.ecb.europa.eu/foedb/dbs/foedb/publications.en/versions.json"
+        versions_res = requests.get(versions_url, headers=headers, timeout=15)
         
-        driver = webdriver.Chrome(options=chrome_options)
-        list_url = f"https://www.ecb.europa.eu/press/pubbydate/html/index.en.html?name_of_publication=Speech&year={year}"
-        driver.get(list_url)
+        if versions_res.status_code != 200:
+            print(f"   ❌ Error obteniendo versiones: {versions_res.status_code}")
+            return pd.DataFrame()
         
-        time.sleep(8)
-        for _ in range(5):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+        versions_data = versions_res.json()
         
-        html = driver.page_source
-        driver.quit()
+        version_id = None
+        db_hash = None
         
-        soup = BeautifulSoup(html, 'html.parser')
+        if isinstance(versions_data, list) and versions_data:
+            version_info = versions_data[0]
+            version_id = version_info.get("version", "")
+            db_hash = version_info.get("hash", "")
         
-        # ========== PASO 1: Extraer TODAS las URLs con hash ==========
-        url_hash_map = {}
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            # Buscar URLs que contengan ~ (hash)
-            if 'ecb.sp' in href and '~' in href:
-                date_match = re.search(r'ecb\.sp(?:20)?(\d{2})(\d{2})(\d{2})', href)
-                if date_match:
-                    y = 2000 + int(date_match.group(1))
-                    m = int(date_match.group(2))
-                    d = int(date_match.group(3))
-                    
-                    if y == year and m == month:
-                        fecha_key = f"{y}-{m}-{d}"
-                        if fecha_key not in url_hash_map:
-                            url_hash_map[fecha_key] = []
-                        
-                        full_url = href if href.startswith('http') else f"https://www.ecb.europa.eu{href}"
-                        # Obtener el texto del enlace (título)
-                        link_text = link.get_text(strip=True)
-                        
-                        url_hash_map[fecha_key].append({
-                            'url': full_url,
-                            'link_text': link_text
-                        })
-                        print(f"   📎 URL con hash encontrada para {d:02d}/{m:02d}: {full_url[:80]}...")
+        if not version_id:
+            print(f"   ❌ No se encontró version_id")
+            return pd.DataFrame()
         
-        print(f"\n   📊 URLs con hash por fecha: {sum(len(v) for v in url_hash_map.values())}")
+        print(f"   ✅ Version ID: {version_id}, Hash: {db_hash}")
         
-        # ========== PASO 2: Extraer títulos y autores del texto ==========
-        all_text = soup.get_text()
-        date_pattern = r'(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})'
+        # ========== PASO 2: Obtener el chunk ==========
+        print("   📡 Obteniendo chunk de datos...")
         
-        for match in re.finditer(date_pattern, all_text):
-            day = int(match.group(1))
-            mes_str = match.group(2).lower()
-            año = int(match.group(3))
-            
-            if año != year:
-                continue
-            
-            mes_num = meses.get(mes_str, 0)
-            if mes_num != month:
-                continue
-            
-            start_pos = match.end()
-            context = all_text[start_pos:start_pos + 800]
-            
-            if 'SPEECH' not in context.upper():
-                continue
-            
-            speech_match = re.search(r'SPEECH\s+([^\n]+)', context, re.IGNORECASE)
-            if not speech_match:
-                continue
-            
-            titulo = speech_match.group(1).strip()
-            titulo = re.sub(r'\s+', ' ', titulo).strip()
-            
-            # Filtrar solo basura obvia
-            if titulo.lower() in ['select', 'topic', 'year', 'board member', 'jel code']:
-                continue
-            
-            # Extraer autor
-            autor = ""
-            after_title = context[context.find(titulo) + len(titulo):]
-            autor_match = re.search(r'\n\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s*\n', after_title)
-            if autor_match:
-                autor_raw = autor_match.group(1).strip()
-                autor = re.sub(r'\s*Details.*$', '', autor_raw, flags=re.IGNORECASE)
-                autor = autor.strip()
-            
-            parsed_date = datetime.datetime(año, mes_num, day)
-            fecha_key = f"{año}-{mes_num}-{day}"
-            
-            # ========== BUSCAR URL CON HASH para este discurso ==========
-            url_final = None
-            
-            if fecha_key in url_hash_map:
-                # Intentar asociar por título
-                for item in url_hash_map[fecha_key]:
-                    # Si el texto del enlace contiene el título o el autor
-                    if titulo.lower() in item['link_text'].lower() or autor.lower() in item['link_text'].lower():
-                        url_final = item['url']
-                        print(f"      🔗 Asociado por coincidencia: {titulo[:40]}... -> {item['link_text'][:40]}...")
-                        break
+        chunk_url = f"https://www.ecb.europa.eu/foedb/dbs/foedb/publications.en/{version_id}/{db_hash}/data/0/chunk_0.json"
+        res = requests.get(chunk_url, headers=headers, timeout=30)
+        
+        if res.status_code != 200:
+            print(f"   ❌ Error obteniendo chunk: {res.status_code}")
+            return pd.DataFrame()
+        
+        data = res.json()
+        
+        if not isinstance(data, list):
+            print(f"   ⚠️ El chunk no es una lista, es {type(data)}")
+            return pd.DataFrame()
+        
+        print(f"   📚 Total elementos en chunk: {len(data)}")
+        
+        # ========== PASO 3: Procesar en bloques ==========
+        print("   🔍 Procesando documentos en bloques...")
+        
+        docs_procesados = 0
+        docs_encontrados = 0
+        
+        i = 0
+        while i < len(data):
+            try:
+                if i + 11 >= len(data):
+                    break
                 
-                # Si no se encontró coincidencia, usar la primera URL con hash
-                if not url_final and url_hash_map[fecha_key]:
-                    url_final = url_hash_map[fecha_key][0]['url']
-                    print(f"      🔗 Usando primera URL con hash para {day:02d}/{month:02d}")
-            
-            # Si no hay URL con hash, construir genérica (fallback)
-            if not url_final:
-                year_short = str(year)[2:]
-                url_final = f"https://www.ecb.europa.eu/press/key/date/{year}/html/ecb.sp{year_short}{month:02d}{day:02d}.en.html"
-                print(f"      ⚠️ Usando URL genérica para {day:02d}/{month:02d}")
-            
-            titulo_final = f"{autor}: {titulo}" if autor else titulo
-            titulo_final = re.sub(r'\s+', ' ', titulo_final).strip()
-            
-            # Evitar duplicados por título
-            if titulo_final not in seen_titles:
-                seen_titles.add(titulo_final)
-                rows.append({
-                    "Date": parsed_date,
-                    "Title": titulo_final,
-                    "Link": url_final,
-                    "Organismo": "ECB (Europa)"
-                })
-                print(f"      ✅ {parsed_date.strftime('%d/%m/%Y')}: {titulo_final[:60]}...")
+                # Extraer campos
+                doc_type = data[i+4] if i+4 < len(data) else None
+                
+                # Solo procesar si es type=19
+                if doc_type == 19:
+                    docs_procesados += 1
+                    
+                    # Extraer timestamp
+                    timestamp = data[i+1] if i+1 < len(data) else None
+                    
+                    # Extraer URL (posición 9)
+                    url_list = data[i+9] if i+9 < len(data) and isinstance(data[i+9], list) else []
+                    
+                    # Extraer metadata (posición 10)
+                    metadata = data[i+10] if i+10 < len(data) and isinstance(data[i+10], dict) else {}
+                    
+                    # Título
+                    titulo = metadata.get("Title", "") if isinstance(metadata, dict) else ""
+                    
+                    # Fecha
+                    parsed_date = None
+                    if timestamp and isinstance(timestamp, int):
+                        try:
+                            parsed_date = datetime.datetime.fromtimestamp(timestamp)
+                        except:
+                            pass
+                    
+                    # Solo agregar si tiene título y fecha
+                    if titulo and parsed_date:
+                        # Filtrar por rango de fechas
+                        if parsed_date >= start_date and parsed_date <= end_date:
+                            # Excluir PDFs
+                            es_pdf = False
+                            for url in url_list:
+                                if isinstance(url, str) and '.pdf' in url.lower():
+                                    es_pdf = True
+                                    break
+                            
+                            # Excluir títulos con "slides" o "presentation"
+                            titulo_lower = titulo.lower()
+                            if 'slides' in titulo_lower or 'presentation' in titulo_lower:
+                                es_pdf = True
+                            
+                            if not es_pdf:
+                                # URL
+                                link = ""
+                                if url_list and isinstance(url_list, list) and len(url_list) > 0:
+                                    link = url_list[0]
+                                    if link and not link.startswith('http'):
+                                        link = f"https://www.ecb.europa.eu{link}"
+                                
+                                # ========== EXTRAER AUTOR CON APELLIDO COMPLETO ==========
+                                autor = ""
+                                subtitulo = metadata.get("Subtitle", "") if isinstance(metadata, dict) else ""
+                                if isinstance(subtitulo, list):
+                                    subtitulo = " ".join(subtitulo)
+                                
+                                # 1. Buscar en subtítulo: "Speech by Nombre Apellido"
+                                if subtitulo:
+                                    # 🔥 MEJORADO: Captura nombre + apellido completo (incluyendo iniciales)
+                                    match = re.search(r'(?:Speech|Keynote speech|Lecture|Remarks|Address|Testimony)\s+by\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*[A-Z][a-z]+)*)', subtitulo, re.IGNORECASE)
+                                    if match:
+                                        autor = match.group(1).strip()
+                                        print(f"      📝 Autor (subtítulo): {autor}")
+                                
+                                # 2. Buscar en título: "Nombre Apellido: Título"
+                                if not autor:
+                                    match = re.match(r'^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*[A-Z][a-z]+)*)\s*[:：]', titulo)
+                                    if match:
+                                        autor = match.group(1).strip()
+                                        titulo = re.sub(rf'^{re.escape(autor)}[:：]\s*', '', titulo)
+                                        print(f"      📝 Autor (título): {autor}")
+                                
+                                # 3. Buscar en "Authors"
+                                if not autor:
+                                    authors = metadata.get("Authors", "")
+                                    if authors and isinstance(authors, list) and len(authors) > 0:
+                                        autor = authors[0]
+                                        print(f"      📝 Autor (Authors): {autor}")
+                                    elif authors and isinstance(authors, str):
+                                        autor = authors
+                                        print(f"      📝 Autor (Authors): {autor}")
+                                
+                                # 4. Buscar con regex más flexible para nombres con iniciales
+                                if not autor:
+                                    # Patrón: "Nombre Inicial. Apellido" o "Nombre Apellido"
+                                    match = re.search(r'([A-Z][a-z]+(?:\s+[A-Z]\.\s*[A-Z][a-z]+|\s+[A-Z][a-z]+))', titulo)
+                                    if match:
+                                        autor = match.group(1).strip()
+                                        print(f"      📝 Autor (regex): {autor}")
+                                
+                                # Limpiar autor
+                                if autor:
+                                    autor = re.sub(r'\s+', ' ', autor).strip()
+                                    # Eliminar "NA" o valores vacíos
+                                    if autor.upper() in ['NA', 'N/A', ''] or len(autor) < 3:
+                                        autor = ""
+                                    # Si tiene ":" al final, removerlo
+                                    autor = re.sub(r':$', '', autor).strip()
+                                
+                                # ========== CONSTRUIR TÍTULO FINAL ==========
+                                titulo = titulo.strip().strip('"').strip("'")
+                                
+                                if autor and titulo.lower().startswith(autor.lower()):
+                                    titulo = re.sub(rf'^{re.escape(autor)}[:：]\s*', '', titulo)
+                                
+                                titulo = re.sub(r'\s*[-–—]\s*', ': ', titulo)
+                                
+                                titulo_final = f"{autor}: {titulo}" if autor else titulo
+                                titulo_final = re.sub(r'\s+', ' ', titulo_final).strip()
+                                
+                                rows.append({
+                                    "Date": parsed_date,
+                                    "Title": titulo_final,
+                                    "Link": link,
+                                    "Organismo": "ECB (Europa)"
+                                })
+                                docs_encontrados += 1
+                                print(f"      ✅ {parsed_date.strftime('%d/%m/%Y')}: {titulo_final[:60]}...")
+                            else:
+                                print(f"      ⏭️ PDF excluido: {parsed_date.strftime('%d/%m/%Y')} - {titulo[:50]}...")
+                        else:
+                            print(f"      ⏭️ Fuera de rango: {parsed_date.strftime('%d/%m/%Y')} - {titulo[:50]}...")
+                    else:
+                        print(f"      ⚠️ Sin título o fecha: {doc_type}")
+                    
+                    # Avanzar 12 posiciones (tamaño del bloque)
+                    i += 12
+                else:
+                    # Si no es type=19, avanzar SOLO 1 posición
+                    i += 1
+                
+            except Exception as e:
+                i += 1
+                continue
+        
+        print(f"   📊 Documentos procesados: {docs_procesados}, Encontrados: {docs_encontrados}")
         
     except Exception as e:
-        print(f"   ❌ Error: {e}")
+        print(f"   ❌ Error en load_data_ecb: {e}")
         import traceback
         traceback.print_exc()
     
@@ -4559,7 +4625,6 @@ def load_data_ecb(start_date_str, end_date_str):
     
     print(f"\n📊 ECB (Europa) - Total final: {len(df)} discursos")
     return df
-
 
 ## Discursos - BPI (BIS)
 # ==========================================
@@ -5946,96 +6011,7 @@ def load_data_boj(start_date_str, end_date_str):
     return df
 
 ## --------------------------------------------------------------
-
-@st.cache_data(show_spinner=False)
-def load_data_cef(start_date_str, end_date_str):
-    """
-    Extractor CEF (FSB) - SOLO Discursos y Statements
-    Con manejo robusto de timeouts y fallbacks para autor
-    """
-    import requests
-    from bs4 import BeautifulSoup
-    import datetime
-    import time
-    import re
-    from dateutil import parser
-    
-    try:
-        start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
-        end_date = datetime.datetime.strptime(end_date_str, '%d.%m.%Y')
-        print(f"📅 CEF (FSB): {start_date.date()} a {end_date.date()}")
-    except:
-        start_date = datetime.datetime(2000, 1, 1)
-        end_date = datetime.datetime.now()
-        print(f"⚠️ Error en fechas, usando rango por defecto")
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    }
-    
-    rows = []
-    page = 1
-    
-    def es_discurso(item):
-        """Determina si un elemento HTML es un discurso analizando el texto completo"""
-        try:
-            # Obtener el texto completo del elemento (incluye título y subtítulo)
-            texto_completo = item.get_text(separator=" ", strip=True)
-            
-            # ⚠️ EXCLUSIONES: Comunicados de prensa puros
-            if re.search(r'^(fsb publishes|fsb warns|fsb chair warns)', texto_completo.lower()):
-                # Si es un comunicado de prensa, solo incluirlo si menciona "speech"
-                if 'speech' not in texto_completo.lower():
-                    return False
-            
-            # ✅ INCLUSIONES POR PALABRAS CLAVE EN EL TEXTO COMPLETO
-            keywords = [
-                'speech', 'remarks', 'keynote', 'opening remarks', 'closing remarks',
-                'statement', 'address', 'testimony', 'foreword'
-            ]
-            if any(keyword in texto_completo.lower() for keyword in keywords):
-                return True
-            
-            # ✅ INCLUSIÓN POR AUTOR (patrón "by Nombre Apellido")
-            if re.search(r'by\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*', texto_completo):
-                return True
-            
-            # ✅ FALLBACK: Si el título menciona temas de discursos y tiene fecha
-            title_elem = item.find('h3') or item.find('div', class_='post-title')
-            if title_elem:
-                titulo = title_elem.get_text(strip=True)
-                # Temas comunes en discursos del FSB
-                if any(word in titulo.lower() for word in [
-                    'financial stability', 'multilateralism', 'cross-border', 
-                    'resolution', 'regulation', 'supervision', 'reform',
-                    'payments', 'stability', 'risk', 'resilience'
-                ]):
-                    # Verificar que tiene fecha (probablemente es un discurso)
-                    if item.find('div', class_='post-date') or item.find('time'):
-                        return True
-            
-            return False
-        except:
-            return False
-    
-    def inferir_autor_desde_titulo(titulo):
-        """Infiere el autor basándose en el título cuando no se puede acceder a la página"""
-        titulo_lower = titulo.lower()
-        
-        # Palabras clave que indican quién es el autor
-        if 'fsb chair' in titulo_lower or 'chair' in titulo_lower:
-            return 'Andrew Bailey'
-        if 'secretary general' in titulo_lower:
-            return 'John Schindler'
-        if 'deputy governor' in titulo_lower:
-            # Podría ser varios, pero intentamos extraer del contexto
-            if 'john schindler' in titulo_lower:
-                return 'John Schindler'
-            return 'FSB Deputy Governor'
-        
-        return None
-    
+   
 @st.cache_data(show_spinner=False)
 def load_data_cef(start_date_str, end_date_str):
     """
@@ -6102,33 +6078,59 @@ def load_data_cef(start_date_str, end_date_str):
 
     def extraer_autor_de_elemento(item):
         """
-        Extrae el autor del texto completo del elemento HTML de la página de listado.
+        Extrae el autor del elemento HTML de la página de listado.
+        Busca en:
+        1. El texto del elemento (patrones con "by")
+        2. La descripción (media-excerpt)
+        3. Las clases del elemento (profile_post-*)
         """
         try:
+            # 1. Obtener el texto completo del elemento
             texto_completo = item.get_text(separator=" ", strip=True)
             
-            # Patrón 1: "by Nombre Apellido"
+            # 2. Buscar patrones con "by"
             match = re.search(r'by\s+([A-Z][a-z]+(?:\s+[A-Z]\.(?:\s+[A-Z][a-z]+)?)?(?:\s+[A-Z][a-z]+)?)', texto_completo)
             if match:
                 return clean_author_name(match.group(1).strip())
             
-            # Patrón 2: "Opening remarks by Nombre Apellido"
-            match = re.search(r'opening remarks\s+by\s+([A-Z][a-z]+(?:\s+[A-Z]\.(?:\s+[A-Z][a-z]+)?)?(?:\s+[A-Z][a-z]+)?)', texto_completo, re.IGNORECASE)
-            if match:
-                return clean_author_name(match.group(1).strip())
+            # 3. 🔥 NUEVO: Buscar en la descripción (media-excerpt)
+            excerpt_span = item.find('span', class_='media-excerpt')
+            if excerpt_span:
+                excerpt_text = excerpt_span.get_text(strip=True)
+                
+                # Mapeo de cargos a nombres
+                if 'John Schindler' in excerpt_text:
+                    return 'John Schindler'
+                if 'Martin Moloney' in excerpt_text:
+                    return 'Martin Moloney'
+                if 'Michelle W. Bowman' in excerpt_text:
+                    return 'Michelle W. Bowman'
+                if 'Dominique Laboureix' in excerpt_text:
+                    return 'Dominique Laboureix'
+                if 'Andrew Bailey' in excerpt_text:
+                    return 'Andrew Bailey'
+                
+                # Si no hay nombre explícito, buscar por cargo
+                if 'Secretary General' in excerpt_text and 'John' in excerpt_text:
+                    return 'John Schindler'
+                if 'Deputy Secretary General' in excerpt_text:
+                    return 'Martin Moloney'
+                if 'Chair of the FSB Resolution Steering Group' in excerpt_text:
+                    return 'Dominique Laboureix'
+                if 'Chair of the FSB Standing Committee' in excerpt_text:
+                    return 'Michelle W. Bowman'
             
-            # Patrón 3: "speech by Nombre Apellido"
-            match = re.search(r'speech\s+by\s+([A-Z][a-z]+(?:\s+[A-Z]\.(?:\s+[A-Z][a-z]+)?)?(?:\s+[A-Z][a-z]+)?)', texto_completo, re.IGNORECASE)
-            if match:
-                return clean_author_name(match.group(1).strip())
-            
-            # Patrón 4: "remarks by Nombre Apellido"
-            match = re.search(r'remarks\s+by\s+([A-Z][a-z]+(?:\s+[A-Z]\.(?:\s+[A-Z][a-z]+)?)?(?:\s+[A-Z][a-z]+)?)', texto_completo, re.IGNORECASE)
-            if match:
-                return clean_author_name(match.group(1).strip())
+            # 4. 🔥 NUEVO: Extraer de la clase profile_post-*
+            article = item.find('article') or item
+            if article and article.get('class'):
+                for clase in article.get('class'):
+                    if clase.startswith('profile_post-'):
+                        nombre_raw = clase.replace('profile_post-', '')
+                        nombre = ' '.join([p.capitalize() for p in nombre_raw.split('-')])
+                        return nombre
             
             return None
-        except:
+        except Exception as e:
             return None
 
     def inferir_autor_desde_titulo(titulo):
@@ -7562,23 +7564,36 @@ if modo_app == "Boletín":
             if all_dfs:
                 f_df = pd.concat(all_dfs, ignore_index=True)
 
-                            # ========== ELIMINACIÓN MEJORADA DE DUPLICADOS ==========
+                # ========== ELIMINACIÓN MEJORADA DE DUPLICADOS ==========
                 print(f"📊 Total antes de desduplicar: {len(f_df)}")
                 
                 # 1. Eliminar duplicados exactos por Link
                 f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
                 print(f"   Después de eliminar duplicados por Link: {len(f_df)}")
-                
+
                 # 2. Eliminar duplicados por Título (normalizado)
-                # Normalizar títulos: quitar caracteres especiales, espacios múltiples, pasar a minúsculas
                 f_df['Title_Normalized'] = f_df['Title'].str.lower()
                 f_df['Title_Normalized'] = f_df['Title_Normalized'].str.replace(r'[^\w\s]', '', regex=True)
                 f_df['Title_Normalized'] = f_df['Title_Normalized'].str.replace(r'\s+', ' ', regex=True).str.strip()
-                
+
+                # ✅ Crear copia ANTES de eliminar (para depuración)
+                f_df_before_title = f_df.copy()
+
                 # Eliminar duplicados por título normalizado, manteniendo el primero (el más reciente por fecha)
                 f_df = f_df.sort_values('Date', ascending=False).drop_duplicates(subset=['Title_Normalized'], keep='first')
                 print(f"   Después de eliminar duplicados por título: {len(f_df)}")
-                
+
+                # 🔍 DEPURACIÓN: Identificar los títulos eliminados
+                eliminados_titulo = f_df_before_title[~f_df_before_title['Title_Normalized'].isin(f_df['Title_Normalized'])]
+                if not eliminados_titulo.empty:
+                    print(f"   🔍 Títulos eliminados por desduplicación ({len(eliminados_titulo)}):")
+                    for idx, row in eliminados_titulo.head(10).iterrows():  # Mostrar solo los primeros 10
+                        print(f"      - {row['Title'][:80]}... ({row['Organismo']})")
+                    if len(eliminados_titulo) > 10:
+                        print(f"      ... y {len(eliminados_titulo) - 10} más")
+                else:
+                    print("   ✅ No se eliminaron títulos por duplicación")
+
                 # 3. Eliminar duplicados que sean casi idénticos (similitud de título > 90%)
                 # Esto ayuda con títulos como "Preserving stability..." vs "Preserving Stability..."
                 def is_similar(title1, title2, threshold=0.9):
@@ -7590,7 +7605,7 @@ if modo_app == "Boletín":
                     intersection = words1.intersection(words2)
                     union = words1.union(words2)
                     return len(intersection) / len(union) > threshold
-                
+
                 # Comparar títulos dentro de cada categoría y organismo
                 indices_a_eliminar = set()
                 for categoria in f_df['Categoría'].unique():
@@ -7614,14 +7629,14 @@ if modo_app == "Boletín":
                                         indices_a_eliminar.add(df_subset.index[j])
                                     else:
                                         indices_a_eliminar.add(df_subset.index[i])
-                
+
                 # Eliminar duplicados similares
                 f_df = f_df.drop(index=indices_a_eliminar, errors='ignore')
                 print(f"   Después de eliminar duplicados similares: {len(f_df)}")
-                
+
                 # Eliminar columna temporal
                 f_df = f_df.drop(columns=['Title_Normalized'], errors='ignore')
-                
+
                 print(f"📊 Total después de desduplicación: {len(f_df)}")
 
                 # --- PREPARACIÓN PARA EL WORD (Orden Institucional) ---
