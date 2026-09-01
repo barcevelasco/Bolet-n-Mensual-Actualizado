@@ -4631,142 +4631,235 @@ def load_data_ecb(start_date_str, end_date_str):
 @st.cache_data(show_spinner=False)
 def load_data_bis(use_event_date=False, target_year=None, target_month=None):
     """
-    Extractor BIS (BPI) - Discursos
-    
-    Parámetros:
-    -----------
-    use_event_date : bool
-        - False (default): Usa fecha de publicación del API
-        - True: Intenta extraer fecha del evento desde el HTML
-    target_year : int, optional
-        Año objetivo para filtrar (ej: 2026)
-    target_month : int, optional
-        Mes objetivo para filtrar (ej: 5 para mayo)
+    VERSIÓN CON PAGINACIÓN EXTENDIDA - Revisa hasta 20 páginas para encontrar el mes objetivo
     """
     import datetime
     import requests
     import pandas as pd
-    import html
     import re
+    import time
     from bs4 import BeautifulSoup
     from dateutil import parser
     
     print(f"\n{'='*60}")
-    print(f"🔍 load_data_bis() llamada con:")
+    print(f"🔍 load_data_bis() - PAGINACIÓN EXTENDIDA")
     print(f"   use_event_date = {use_event_date}")
     print(f"   target_year = {target_year}")
     print(f"   target_month = {target_month}")
     print(f"{'='*60}")
     
-    urls = ["https://www.bis.org/api/document_lists/cbspeeches.json", 
-            "https://www.bis.org/api/document_lists/bcbs_speeches.json", 
-            "https://www.bis.org/api/document_lists/mgmtspeeches.json"]
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    }
+    
     rows = []
-    current_year = datetime.datetime.now().year
     
     def extraer_fecha_evento_desde_html(url):
-        """Descarga la página HTML y extrae la fecha del evento"""
+        """Extrae la fecha del evento desde la página del discurso"""
         try:
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code != 200:
                 return None
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Buscar en el div 'extratitle-div' (contiene ubicación y fecha del evento)
-            extratitle = soup.find('div', id='extratitle-div')
-            if extratitle:
-                texto = extratitle.get_text()
-            else:
-                texto = soup.get_text()
-            
-            # Buscar patrón de fecha como "22 April 2026"
-            patron = r'(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})'
-            match = re.search(patron, texto, re.IGNORECASE)
-            
-            if match:
-                dia = int(match.group(1))
-                mes_str = match.group(2)
-                año = int(match.group(3))
-                
-                meses = {
-                    'january':1, 'february':2, 'march':3, 'april':4, 'may':5, 'june':6,
-                    'july':7, 'august':8, 'september':9, 'october':10, 'november':11, 'december':12,
-                    'jan':1, 'feb':2, 'mar':3, 'apr':4, 'may':5, 'jun':6,
-                    'jul':7, 'aug':8, 'sep':9, 'oct':10, 'nov':11, 'dec':12
-                }
-                mes_num = meses.get(mes_str.lower()[:3], 1)
-                from datetime import datetime
-                return datetime(año, mes_num, min(dia, 28))
+            for h6 in soup.find_all('h6', class_='publication-sidebar__heading'):
+                if h6 and 'date delivered' in h6.get_text().lower():
+                    date_div = h6.find_next_sibling('div', class_='publication-sidebar__tags')
+                    if date_div:
+                        date_text = date_div.get_text(strip=True)
+                        try:
+                            return parser.parse(date_text)
+                        except:
+                            return None
             return None
         except Exception as e:
-            print(f"      ⚠️ Error extrayendo fecha de HTML: {e}")
             return None
     
-    for url in urls:
+    def extraer_autor_del_card(card):
+        """Extrae el autor del card"""
         try:
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code != 200:
-                continue
-            data = response.json()
+            author_div = card.find('div', class_='card-author')
+            if author_div:
+                a_tag = author_div.find('a', class_='card-author__link')
+                if a_tag:
+                    return a_tag.get_text(strip=True)
             
-            for path, speech in data.get("list", {}).items():
-                title = html.unescape(speech.get("short_title", ""))
-                if not title:
-                    continue
-                    
-                pub_date_str = speech.get("publication_start_date", "")
-                if not pub_date_str:
-                    continue
-                    
-                try:
-                    pub_date = parser.parse(pub_date_str)
-                except:
-                    continue
-                
-                # ✅ FILTRO RÁPIDO: Solo procesar discursos del año/mes objetivo
-                if target_year and target_month:
-                    if pub_date.year != target_year or pub_date.month != target_month:
-                        continue  # Saltar discursos que no son del mes solicitado
-                
-                link = "https://www.bis.org" + path + (".htm" if not path.endswith(".htm") else "")
-                
-                # Para depuración: mostrar el discurso que estamos procesando
-                if "Doornbosch" in title or "Richard" in title:
-                    print(f"\n   📍 PROCESANDO DISCURSO CLAVE:")
-                    print(f"      Título: {title[:80]}...")
-                    print(f"      Fecha publicación API: {pub_date.strftime('%Y-%m-%d')}")
-                    print(f"      use_event_date = {use_event_date}")
-                
-                if use_event_date:
-                    # Solo para discursos recientes descargamos el HTML
-                    if pub_date.year >= current_year - 2:
-                        evento_date = extraer_fecha_evento_desde_html(link)
-                        if evento_date:
-                            if "Doornbosch" in title or "Richard" in title:
-                                print(f"      🎯 Fecha EVENTO encontrada: {evento_date.strftime('%Y-%m-%d')}")
-                            rows.append({"Date": evento_date, "Title": title, "Link": link, "Organismo": "BPI"})
-                            continue
-                        else:
-                            if "Doornbosch" in title or "Richard" in title:
-                                print(f"      ⚠️ No se encontró fecha de evento en HTML")
-                    else:
-                        if "Doornbosch" in title or "Richard" in title:
-                            print(f"      ⏭️ Discurso antiguo ({pub_date.year}), no se descarga HTML")
-                    
-                    # Fallback a fecha de publicación
-                    if "Doornbosch" in title or "Richard" in title:
-                        print(f"      📅 Usando FECHA PUBLICACIÓN: {pub_date.strftime('%Y-%m-%d')}")
-                    rows.append({"Date": pub_date, "Title": title, "Link": link, "Organismo": "BPI"})
-                else:
-                    if "Doornbosch" in title or "Richard" in title:
-                        print(f"      📅 Usando FECHA PUBLICACIÓN (checkbox off): {pub_date.strftime('%Y-%m-%d')}")
-                    rows.append({"Date": pub_date, "Title": title, "Link": link, "Organismo": "BPI"})
-                    
-        except Exception as e:
-            print(f"Error en {url}: {e}")
-            continue
+            for a in card.find_all('a', href=True):
+                if '/author/' in a.get('href', ''):
+                    autor = a.get_text(strip=True)
+                    if autor and len(autor) > 2:
+                        return autor
+            return None
+        except:
+            return None
     
+    def extraer_discursos_de_pagina(url_base, max_pages=20):
+        """
+        Extrae discursos de todas las páginas hasta encontrar el mes objetivo
+        o hasta llegar al límite de páginas
+        """
+        resultados = []
+        page = 0
+        encontrado_mes = False
+        mes_encontrado = False
+        
+        print(f"\n📡 Buscando en: {url_base}")
+        print(f"   Revisando hasta {max_pages} páginas...")
+        
+        while page < max_pages and not encontrado_mes:
+            if page == 0:
+                page_url = url_base
+            else:
+                page_url = f"{url_base}?page={page}"
+            
+            try:
+                print(f"\n   📄 Página {page+1}: {page_url}")
+                response = requests.get(page_url, headers=headers, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"      ❌ Error HTTP: {response.status_code}")
+                    break
+                
+                soup = BeautifulSoup(response.text, 'html.parser')
+                cards = soup.find_all('div', class_='card-wrapper')
+                if not cards:
+                    cards = soup.find_all('div', class_='views-row')
+                
+                if not cards:
+                    print(f"      📭 No hay más resultados")
+                    break
+                
+                print(f"      📚 Cards encontrados: {len(cards)}")
+                
+                hay_discursos_mes = False
+                primer_discurso_mes = None
+                
+                for card in cards:
+                    try:
+                        a_tag = card.find('a', href=True)
+                        if not a_tag:
+                            continue
+                        
+                        link = a_tag.get('href')
+                        if link and not link.startswith('http'):
+                            link = f"https://www.bis.org{link}"
+                        
+                        h5 = card.find('h5', class_='card-heading')
+                        if not h5:
+                            h5 = card.find('h5')
+                        if not h5:
+                            continue
+                        
+                        titulo = h5.get_text(strip=True)
+                        
+                        date_span = card.find('span', class_='card-date')
+                        parsed_date = None
+                        if date_span:
+                            fecha_texto = date_span.get_text(strip=True)
+                            try:
+                                parsed_date = parser.parse(fecha_texto)
+                                if parsed_date.tzinfo is not None:
+                                    parsed_date = parsed_date.replace(tzinfo=None)
+                            except:
+                                pass
+                        
+                        if not parsed_date:
+                            card_text = card.get_text()
+                            match = re.search(r'(\d{1,2}\s+[A-Za-z]{3,}\s+\d{4})', card_text)
+                            if match:
+                                try:
+                                    parsed_date = parser.parse(match.group(1))
+                                    if parsed_date.tzinfo is not None:
+                                        parsed_date = parsed_date.replace(tzinfo=None)
+                                except:
+                                    pass
+                        
+                        if not parsed_date:
+                            continue
+                        
+                        # Verificar si es del mes objetivo
+                        if target_year and target_month:
+                            if parsed_date.year == target_year and parsed_date.month == target_month:
+                                hay_discursos_mes = True
+                                if not primer_discurso_mes:
+                                    primer_discurso_mes = parsed_date
+                            elif parsed_date.year < target_year or (parsed_date.year == target_year and parsed_date.month < target_month):
+                                # Si ya pasamos el mes objetivo, podemos parar
+                                encontrado_mes = True
+                                if not mes_encontrado:
+                                    print(f"      ⏹️ Página {page+1}: Primer disco anterior al mes objetivo, deteniendo")
+                                break
+                            else:
+                                # Es más reciente, lo mostramos pero no lo agregamos
+                                if page == 0:
+                                    print(f"      ⏭️ Más reciente: {parsed_date.strftime('%Y-%m-%d')} - {titulo[:40]}...")
+                                continue
+                        
+                        # Si llegamos aquí, el discurso es del mes objetivo
+                        if use_event_date:
+                            evento_date = extraer_fecha_evento_desde_html(link)
+                            if evento_date:
+                                parsed_date = evento_date
+                        
+                        autor = extraer_autor_del_card(card)
+                        
+                        if autor and autor not in titulo:
+                            titulo_final = f"{autor}: {titulo}"
+                        else:
+                            titulo_final = titulo
+                        
+                        if not any(r['Link'] == link for r in rows) and not any(r['Link'] == link for r in resultados):
+                            resultados.append({
+                                "Date": parsed_date,
+                                "Title": titulo_final,
+                                "Link": link,
+                                "Organismo": "BPI"
+                            })
+                            print(f"      ✅ AGREGADO: {parsed_date.strftime('%Y-%m-%d')} - {titulo_final[:60]}...")
+                            mes_encontrado = True
+                        
+                    except Exception as e:
+                        continue
+                
+                if hay_discursos_mes:
+                    print(f"      📊 Página {page+1}: {len([r for r in resultados if r['Date'].month == target_month and r['Date'].year == target_year])} documentos del mes")
+                
+                if not hay_discursos_mes and page > 3:
+                    # Si ya pasamos varias páginas y no hay discursos del mes, probablemente ya pasamos
+                    encontrado_mes = True
+                
+                # Si la página tiene menos de 10 cards, probablemente es la última
+                if len(cards) < 10 and page > 0:
+                    encontrado_mes = True
+                
+                page += 1
+                time.sleep(0.3)
+                
+            except Exception as e:
+                print(f"      ❌ Error: {e}")
+                break
+        
+        if resultados:
+            print(f"\n   📊 Total encontrados en {url_base}: {len(resultados)} discursos")
+        else:
+            print(f"\n   📊 No se encontraron discursos del mes en {url_base}")
+        
+        return resultados
+    
+    # === EXTRACCIÓN PRINCIPAL ===
+    
+    # 1. Management speeches (menos páginas, pero revisamos igual)
+    management_url = "https://www.bis.org/speeches/management"
+    resultados = extraer_discursos_de_pagina(management_url, max_pages=10)
+    rows.extend(resultados)
+    
+    # 2. Central bank speeches (más páginas, revisamos hasta 20)
+    central_bank_url = "https://www.bis.org/speeches/central-bank"
+    resultados = extraer_discursos_de_pagina(central_bank_url, max_pages=20)
+    rows.extend(resultados)
+    
+    # === CREAR DATAFRAME ===
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
     if not df.empty:
         df = df.drop_duplicates(subset=['Link'])
