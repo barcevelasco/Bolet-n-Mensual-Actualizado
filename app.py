@@ -20,6 +20,7 @@ import cloudscraper  # Para bypass de Cloudflare en BID
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.cache_data.clear()
+from urllib.parse import urlencode, quote
 
 # ==========================================
 # MAPEO DE FUENTES ORIGINALES PARA AUDITORÍA (CON ENLACES)
@@ -7458,6 +7459,10 @@ else:
 st.sidebar.markdown("---")
 
 if modo_app == "Boletín":
+    # ========== LIMPIEZA DE CACHÉ AL INICIO ==========
+    st.cache_data.clear()
+    print("🗑️ CACHÉ LIMPIADA - Inicio del modo Boletín")
+    print("="*60)
     st.title("Generador de Boletín Mensual")
     st.markdown(
         "Extrae y unifica documentos de todas las categorías y organismos por mes.")
@@ -7566,6 +7571,10 @@ if modo_app == "Boletín":
                 prog.progress(paso_actual / total_pasos)
 
             # 3. BARRIDO DE PUBLICACIONES INSTITUCIONALES
+            print("="*60)
+            print(f"🔍 PUBLICACIONES INSTITUCIONALES - Lista de organismos: {orgs_pub_inst}")
+            print(f"   ¿Contiene 'FMI'? {'FMI' in orgs_pub_inst}")
+            print("="*60)
             for org in orgs_pub_inst:
                 txt.text(f"Procesando Pub. Institucionales: {org}...")
                 df = pd.DataFrame()
@@ -7585,28 +7594,67 @@ if modo_app == "Boletín":
                     elif org == "CEMLA":
                         df = load_pub_inst_cemla(sd, ed)
                     elif org == "FMI":
+                        print("="*50)
+                        print("🔍 PROCESANDO FMI EN MODO BOLETÍN")
+                        print(f"   Fechas: {sd} a {ed}")
+                        print(f"   Meses objetivo: {m_num}, Años objetivo: {a_num}")
+                        print("="*50)
+                        
                         # 1. SSG - JSON Estático (WEO, Fiscal Monitor)
                         df_flagships = load_pub_inst_fmi(sd, ed)
-                        print(f"📊 FMI - Flagships: {len(df_flagships)} documentos")
-
-                        # 2. SSG - JSON Estático (Comunicados)
+                        print(f"   📊 Flagships: {len(df_flagships)} documentos")
+                        
+                        # 2. Press Releases
                         df_prs = load_press_releases_fmi(sd, ed)
-                        print(f"📊 FMI - Press Releases: {len(df_prs)} documentos")
-
-                        # 3. CSR API - Coveo (Country Reports)
+                        print(f"   📊 Press Releases: {len(df_prs)} documentos")
+                        
+                        # 3. Country Reports
                         df_crs = load_country_reports_fmi(sd, ed)
-                        print(f"📊 FMI - Country Reports: {len(df_crs)} documentos")
-
-                        # 4. NUEVO: Mission Concluding (de load_fmi_news_all)
+                        print(f"   📊 Country Reports: {len(df_crs)} documentos")
+                        
+                        # 4. Mission Concluding
                         df_mcs = load_fmi_news_all(sd, ed)
-                        print(f"📊 FMI - Mission Concluding: {len(df_mcs)} documentos")
-
-                        # Unión de todos
+                        print(f"   📊 Mission Concluding: {len(df_mcs)} documentos")
+                        
+                        # Unir todos los DataFrames de FMI
                         dfs_a_unir = [d for d in [df_flagships, df_prs, df_crs, df_mcs] if not d.empty]
+                        
                         if dfs_a_unir:
+                            # Concatenar
                             df = pd.concat(dfs_a_unir, ignore_index=True)
-                            df = df.sort_values("Date", ascending=False)
-                            print(f"📊 FMI - TOTAL combinado: {len(df)} documentos")
+                            print(f"   📊 TOTAL FMI antes de filtrar: {len(df)} documentos")
+                            
+                            # Mostrar rango de fechas
+                            if not df.empty and 'Date' in df.columns:
+                                df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+                                df = df.dropna(subset=['Date'])
+                                print(f"      Rango de fechas: {df['Date'].min()} a {df['Date'].max()}")
+                                
+                                # ⚠️ IMPORTANTE: Eliminar zona horaria si existe
+                                try:
+                                    if df['Date'].dt.tz is not None:
+                                        df['Date'] = df['Date'].dt.tz_localize(None)
+                                        print("      ✅ Zona horaria eliminada")
+                                except:
+                                    pass
+                                
+                                # Filtrar por mes y año
+                                df_f = df[(df["Date"].dt.year.isin(a_num)) & (df["Date"].dt.month.isin(m_num))].copy()
+                                print(f"   📊 FMI después de filtrar por {m_num}/{a_num}: {len(df_f)} documentos")
+                                
+                                if not df_f.empty:
+                                    # Asignar organismo y categoría
+                                    df_f['Organismo'] = "FMI"
+                                    df_f['Categoría'] = "Publicaciones Institucionales"
+                                    all_dfs.append(df_f)
+                                    print(f"   ✅ FMI agregado a all_dfs: {len(df_f)} documentos")
+                                else:
+                                    print(f"   ⚠️ No hay documentos de FMI para el mes seleccionado")
+                            else:
+                                print(f"   ⚠️ df vacío o sin columna Date")
+                        else:
+                            print(f"   ⚠️ Ninguna fuente de FMI retornó datos")
+                            df = pd.DataFrame()
                     elif org == "G20":  
                         df = load_pub_inst_g20(sd, ed)
                 except Exception as e:
@@ -7690,12 +7738,35 @@ if modo_app == "Boletín":
             # --- CONSOLIDACIÓN FINAL ---
             if all_dfs:
                 f_df = pd.concat(all_dfs, ignore_index=True)
+                
+                # ========== CORRECCIÓN: Normalizar fechas a tz-naive ==========
+                if 'Date' in f_df.columns:
+                    # Convertir a datetime
+                    f_df['Date'] = pd.to_datetime(f_df['Date'], errors='coerce')
+                    # Eliminar nulos
+                    f_df = f_df.dropna(subset=['Date'])
+                    # Si hay zona horaria, eliminarla
+                    if len(f_df) > 0:
+                        try:
+                            if f_df['Date'].iloc[0].tzinfo is not None:
+                                f_df['Date'] = f_df['Date'].dt.tz_localize(None)
+                                print(f"   🔧 Fechas normalizadas a tz-naive")
+                        except:
+                            pass
 
                 # ========== ELIMINACIÓN MEJORADA DE DUPLICADOS ==========
                 print(f"📊 Total antes de desduplicar: {len(f_df)}")
                 
                 # 1. Eliminar duplicados exactos por Link
+                # Eliminar duplicados por Link, pero conservando los de FMI
                 f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
+                # Asegurar que FMI no se pierda
+                if len(f_df[f_df['Organismo'] == 'FMI']) < 30:
+                    print("⚠️ Recuperando documentos FMI perdidos...")
+                    # Los documentos FMI ya están en all_dfs, los volvemos a agregar
+                    fmi_recuperados = pd.concat([df for df in all_dfs if 'FMI' in df['Organismo'].values], ignore_index=True)
+                    fmi_recuperados = fmi_recuperados.drop_duplicates(subset=['Link'], keep='first')
+                    f_df = pd.concat([f_df[~f_df['Organismo'].isin(['FMI'])], fmi_recuperados], ignore_index=True)
                 print(f"   Después de eliminar duplicados por Link: {len(f_df)}")
 
                 # 2. Eliminar duplicados por Título (normalizado)
