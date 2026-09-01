@@ -5124,118 +5124,165 @@ def load_data_pboc(start_date_str, end_date_str):
 @st.cache_data(show_spinner=False)
 def load_data_fed(anios_num):
     """
-    Extractor Fed (Estados Unidos) - Usando API JSON oficial
+    Extractor Fed (Estados Unidos) - RSS Feed
     """
     import datetime
-    import re
-    import pandas as pd
     import requests
-    import json
+    import pandas as pd
+    import re
+    from dateutil import parser
+    import xml.etree.ElementTree as ET
+    
+    print(f"📡 Extrayendo discursos de la Fed desde RSS...")
     
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     rows = []
     
-    speeches_url = "https://www.federalreserve.gov/json/ne-speeches.json"
+    # URL del RSS feed
+    rss_url = "https://www.federalreserve.gov/feeds/speeches_and_testimony.xml"
+    
+    def extraer_autor_y_titulo(titulo_raw):
+        """
+        Extrae autor y título de varios formatos:
+        - "Barr, Unlocking Opportunities..." -> "Michael S. Barr: Unlocking Opportunities..."
+        - "Chairman Kevin Warsh: Título" -> "Kevin Warsh: Título"
+        - "Warsh, In Our Time..." -> "Kevin Warsh: In Our Time..."
+        """
+        autor = ""
+        titulo = titulo_raw
+        
+        # Mapeo de apellidos a nombres completos
+        nombres_completos = {
+            'Barr': 'Michael S. Barr',
+            'Warsh': 'Kevin Warsh',
+            'Cook': 'Lisa D. Cook',
+            'Jefferson': 'Philip N. Jefferson',
+            'Bowman': 'Michelle W. Bowman',
+            'Waller': 'Christopher J. Waller',
+            'Powell': 'Jerome H. Powell',
+            'Miran': 'Stephen I. Miran',
+            'Kugler': 'Adriana D. Kugler'
+        }
+        
+        # Patrón 1: "Apellido, Título" (formato del RSS)
+        match = re.match(r'^([A-Za-z]+),\s*(.+)$', titulo_raw)
+        if match:
+            apellido = match.group(1)
+            titulo = match.group(2).strip()
+            autor = nombres_completos.get(apellido, apellido)
+            return autor, titulo
+        
+        # Patrón 2: "Cargo Nombre: Título"
+        match = re.match(r'^(?:Chairman|Governor|Vice Chair|Vice Chair for Supervision)\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*[A-Z][a-z]+)*)\s*[:：]\s*(.+)$', titulo_raw)
+        if match:
+            autor = match.group(1).strip()
+            titulo = match.group(2).strip()
+            return autor, titulo
+        
+        # Patrón 3: "Nombre: Título" (sin cargo)
+        match = re.match(r'^([A-Z][a-z]+(?:\s+[A-Z]\.?\s*[A-Z][a-z]+)*)\s*[:：]\s*(.+)$', titulo_raw)
+        if match:
+            autor = match.group(1).strip()
+            titulo = match.group(2).strip()
+            return autor, titulo
+        
+        # Patrón 4: Buscar nombres conocidos al inicio
+        for nombre in nombres_completos.values():
+            if titulo_raw.startswith(nombre):
+                autor = nombre
+                titulo = titulo_raw.replace(nombre, '').replace(':', '').strip()
+                return autor, titulo
+        
+        return autor, titulo
     
     try:
-        print(f"   📡 Cargando discursos de la Fed desde API...")
-        response = requests.get(speeches_url, headers=headers, timeout=15)
+        print(f"   📡 Intentando RSS: {rss_url}")
+        response = requests.get(rss_url, headers=headers, timeout=10)
         
         if response.status_code == 200:
-            # Decodificar con utf-8-sig para eliminar BOM
-            content = response.content.decode('utf-8-sig')
-            speeches = json.loads(content)
-            print(f"   📚 Total de discursos en API: {len(speeches)}")
+            root = ET.fromstring(response.content)
             
-            for speech in speeches:
-                date_str = speech.get('d', '')
-                if not date_str:
+            # Buscar todos los items en el RSS
+            items = root.findall('.//item')
+            print(f"   📚 Total de items en RSS: {len(items)}")
+            
+            for item in items:
+                titulo = item.find('title')
+                link = item.find('link')
+                pub_date = item.find('pubDate')
+                description = item.find('description')
+                
+                if titulo is None or link is None:
                     continue
                 
-                try:
-                    date_part = date_str.split(' ')[0]
-                    month, day, year = map(int, date_part.split('/'))
-                    parsed_date = datetime.datetime(year, month, day)
-                except Exception as e:
+                titulo_text = titulo.text
+                link_text = link.text
+                
+                if not titulo_text or not link_text:
+                    continue
+                
+                parsed_date = None
+                if pub_date is not None and pub_date.text:
+                    try:
+                        parsed_date = parser.parse(pub_date.text)
+                    except:
+                        pass
+                
+                if not parsed_date:
+                    # Intentar extraer fecha del link
+                    match = re.search(r'/(\d{4})(\d{2})(\d{2})/', link_text)
+                    if match:
+                        try:
+                            parsed_date = datetime.datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                        except:
+                            pass
+                
+                if not parsed_date:
                     continue
                 
                 if parsed_date.year not in anios_num:
                     continue
                 
-                titulo = speech.get('t', '')
-                speaker_raw = speech.get('s', '')
-                link = speech.get('l', '')
+                # Extraer autor y título
+                autor, titulo = extraer_autor_y_titulo(titulo_text)
                 
-                if not titulo or not link:
-                    continue
+                # Si no se encontró autor en el título, intentar con la descripción
+                if not autor and description is not None and description.text:
+                    desc_text = description.text
+                    # Buscar "Governor Nombre" o "Chairman Nombre" en la descripción
+                    match = re.search(r'(?:Governor|Chairman|Vice Chair)\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*[A-Z][a-z]+)*)', desc_text)
+                    if match:
+                        autor = match.group(1).strip()
                 
-                # ========== CORRECCIÓN: Extraer nombre completo ==========
-                speaker_clean = speaker_raw
+                # Si no hay autor, usar "Federal Reserve"
+                if not autor:
+                    autor = "Federal Reserve"
                 
-                # Patrón para extraer nombre completo (nombre + apellido)
-                # Ejemplos:
-                # "Vice Chair for Supervision Michelle W. Bowman" -> "Michelle W. Bowman"
-                # "Governor Michael S. Barr" -> "Michael S. Barr"
-                # "Chair Jerome H. Powell" -> "Jerome H. Powell"
-                # "Vice Chair Philip N. Jefferson" -> "Philip N. Jefferson"
-                # "Governor Lisa D. Cook" -> "Lisa D. Cook"
-                # "Governor Stephen I. Miran" -> "Stephen I. Miran"
-                # "Governor Christopher J. Waller" -> "Christopher J. Waller"
+                titulo_final = f"{autor}: {titulo}"
+                titulo_final = re.sub(r'\s+', ' ', titulo_final).strip()
                 
-                # Buscar patrón: cargo + nombre (con posible inicial de segundo nombre)
-                name_match = re.search(
-                    r'(?:Chair|Vice Chair(?: for Supervision)?|Governor|President|Director)\s+([A-Z][a-z]+(?:\s+[A-Z]\.?(?:\s+[A-Z][a-z]+)?)?(?:\s+[A-Z][a-z]+)?)',
-                    speaker_raw
-                )
-                
-                if name_match:
-                    speaker_clean = name_match.group(1).strip()
-                else:
-                    # Fallback: tomar las últimas 2-3 palabras que parezcan un nombre
-                    words = speaker_raw.split()
-                    # Buscar palabras que empiecen con mayúscula (posible nombre)
-                    name_words = [w for w in words if re.match(r'^[A-Z][a-z]*\.?$', w)]
-                    if len(name_words) >= 2:
-                        speaker_clean = ' '.join(name_words[-2:])  # Nombre y apellido
-                    elif len(name_words) == 1:
-                        speaker_clean = name_words[-1]
-                    else:
-                        speaker_clean = speaker_raw
-                
-                # Limpiar puntos y espacios extra
-                speaker_clean = re.sub(r'\s+', ' ', speaker_clean).strip()
-                
-                # Construir URL completa
-                if link and not link.startswith('http'):
-                    full_link = f"https://www.federalreserve.gov{link}"
-                else:
-                    full_link = link
-                
-                titulo_final = f"{speaker_clean}: {titulo}"
-                
-                rows.append({
-                    "Date": parsed_date,
-                    "Title": titulo_final,
-                    "Link": full_link,
-                    "Organismo": "Fed (Estados Unidos)"
-                })
-                print(f"      ✅ {parsed_date.strftime('%d/%m/%Y')}: {speaker_clean} - {titulo[:50]}...")
-            
+                if not any(r['Link'] == link_text for r in rows):
+                    rows.append({
+                        "Date": parsed_date,
+                        "Title": titulo_final,
+                        "Link": link_text,
+                        "Organismo": "Fed (Estados Unidos)"
+                    })
+                    print(f"      ✅ {parsed_date.strftime('%d/%m/%Y')}: {titulo_final[:60]}...")
+                    
         else:
-            print(f"   ❌ Error en API de la Fed: {response.status_code}")
+            print(f"   ❌ Error en RSS: {response.status_code}")
             
     except Exception as e:
-        print(f"   ❌ Error en load_data_fed: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"   ❌ Error: {e}")
     
     df = pd.DataFrame(rows)
     if not df.empty:
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.sort_values("Date", ascending=False)
-        df = df.drop_duplicates(subset=['Title'], keep='first')
         df = df.drop_duplicates(subset=['Link'], keep='first')
+        df = df.drop_duplicates(subset=['Title'], keep='first')
     
     print(f"📊 Fed (Estados Unidos) - Total: {len(df)} discursos")
     return df
