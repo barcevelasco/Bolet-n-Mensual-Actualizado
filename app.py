@@ -7759,92 +7759,42 @@ if modo_app == "Boletín":
 
                 # ========== ELIMINACIÓN MEJORADA DE DUPLICADOS ==========
                 print(f"📊 Total antes de desduplicar: {len(f_df)}")
-                
-                # 1. Eliminar duplicados exactos por Link
-                # Eliminar duplicados por Link, pero conservando los de FMI
-                # === 1. ELIMINAR DUPLICADOS EXACTOS POR LINK (VERSIÓN SUAVE) ===
-                # Solo eliminar duplicados donde la URL es IDÉNTICA
-                f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
-                print(f"   Después de eliminar duplicados EXACTOS por Link: {len(f_df)}")
-                # Asegurar que FMI no se pierda
 
-                # 2. Eliminar duplicados por Título (normalizado)
-                f_df['Title_Normalized'] = f_df['Title'].str.lower()
-                f_df['Title_Normalized'] = f_df['Title_Normalized'].str.replace(r'[^\w\s]', '', regex=True)
-                f_df['Title_Normalized'] = f_df['Title_Normalized'].str.replace(r'\s+', ' ', regex=True).str.strip()
+                # === 1. DESDUPLICACIÓN POR LINK DESACTIVADA TEMPORALMENTE ===
+                print(f"   🔍 DESDUPLICACIÓN POR LINK DESACTIVADA - Total: {len(f_df)}")
 
-                # ✅ Crear copia ANTES de eliminar (para depuración)
-                f_df_before_title = f_df.copy()
+                # ========== DESDUPLICACIÓN COMPLETAMENTE DESACTIVADA PARA DEPURACIÓN ==========
+                print(f"📊 Total antes de desduplicar: {len(f_df)}")
+                print(f"   🔍 TODA LA DESDUPLICACIÓN DESACTIVADA - Total: {len(f_df)}")
 
-                # Eliminar duplicados por título normalizado, manteniendo el primero (el más reciente por fecha)
-                f_df = f_df.sort_values('Date', ascending=False).drop_duplicates(subset=['Title_Normalized'], keep='first')
-                print(f"   Después de eliminar duplicados por título: {len(f_df)}")
+                # === 1. DESDUPLICACIÓN POR LINK DESACTIVADA ===
+                # print(f"   🔍 DESDUPLICACIÓN POR LINK DESACTIVADA - Total: {len(f_df)}")
 
-                # === 🆕 RECUPERAR DOCUMENTOS FMI ELIMINADOS ===
-                fmi_eliminados = f_df_before_title[
-                    (f_df_before_title['Organismo'] == 'FMI') & 
-                    (~f_df_before_title['Title_Normalized'].isin(f_df['Title_Normalized']))
-                ]
+                # === 2. DESDUPLICACIÓN POR TÍTULO DESACTIVADA ===
+                # f_df['Title_Normalized'] = f_df['Title'].str.lower()
+                # f_df['Title_Normalized'] = f_df['Title_Normalized'].str.replace(r'[^\w\s]', '', regex=True)
+                # f_df['Title_Normalized'] = f_df['Title_Normalized'].str.replace(r'\s+', ' ', regex=True).str.strip()
+                # f_df_before_title = f_df.copy()
+                # f_df = f_df.sort_values('Date', ascending=False).drop_duplicates(subset=['Title_Normalized'], keep='first')
+                # print(f"   Después de eliminar duplicados por título: {len(f_df)}")
 
-                if not fmi_eliminados.empty:
-                    f_df = pd.concat([f_df, fmi_eliminados], ignore_index=True)
-                    print(f"   ✅ Recuperados {len(fmi_eliminados)} documentos FMI que se estaban perdiendo")
-                else:
-                    print("   ℹ️ No se perdieron documentos FMI en la desduplicación")
+                # === 3. RECUPERACIÓN DE FMI DESACTIVADA ===
+                # fmi_eliminados = f_df_before_title[
+                #     (f_df_before_title['Organismo'] == 'FMI') & 
+                #     (~f_df_before_title['Title_Normalized'].isin(f_df['Title_Normalized']))
+                # ]
+                # if not fmi_eliminados.empty:
+                #     f_df = pd.concat([f_df, fmi_eliminados], ignore_index=True)
+                #     print(f"   ✅ Recuperados {len(fmi_eliminados)} documentos FMI que se estaban perdiendo")
+                # else:
+                #     print("   ℹ️ No se perdieron documentos FMI en la desduplicación")
 
-                # 🔍 DEPURACIÓN: Identificar los títulos eliminados
-                eliminados_titulo = f_df_before_title[~f_df_before_title['Title_Normalized'].isin(f_df['Title_Normalized'])]
-                if not eliminados_titulo.empty:
-                    print(f"   🔍 Títulos eliminados por desduplicación ({len(eliminados_titulo)}):")
-                    for idx, row in eliminados_titulo.head(10).iterrows():  # Mostrar solo los primeros 10
-                        print(f"      - {row['Title'][:80]}... ({row['Organismo']})")
-                    if len(eliminados_titulo) > 10:
-                        print(f"      ... y {len(eliminados_titulo) - 10} más")
-                else:
-                    print("   ✅ No se eliminaron títulos por duplicación")
+                # === 4. DESDUPLICACIÓN POR SIMILITUD DESACTIVADA ===
+                # def is_similar(title1, title2, threshold=0.95):
+                #     ... (todo el código)
 
-                # 3. Eliminar duplicados que sean casi idénticos (similitud de título > 90%)
-                # Esto ayuda con títulos como "Preserving stability..." vs "Preserving Stability..."
-                def is_similar(title1, title2, threshold=0.95):
-                    """Compara similitud entre dos títulos usando secuencia de palabras"""
-                    words1 = set(title1.lower().split())
-                    words2 = set(title2.lower().split())
-                    if not words1 or not words2:
-                        return False
-                    intersection = words1.intersection(words2)
-                    union = words1.union(words2)
-                    return len(intersection) / len(union) > threshold
-
-                # Comparar títulos dentro de cada categoría y organismo
-                indices_a_eliminar = set()
-                for categoria in f_df['Categoría'].unique():
-                    for organismo in f_df['Organismo'].unique():
-                        mask = (f_df['Categoría'] == categoria) & (f_df['Organismo'] == organismo)
-                        df_subset = f_df[mask].copy()
-                        
-                        for i in range(len(df_subset)):
-                            if i in indices_a_eliminar:
-                                continue
-                            title_i = df_subset.iloc[i]['Title_Normalized']
-                            for j in range(i + 1, len(df_subset)):
-                                if j in indices_a_eliminar:
-                                    continue
-                                title_j = df_subset.iloc[j]['Title_Normalized']
-                                if is_similar(title_i, title_j):
-                                    # Mantener el más reciente
-                                    date_i = df_subset.iloc[i]['Date']
-                                    date_j = df_subset.iloc[j]['Date']
-                                    if date_i >= date_j:
-                                        indices_a_eliminar.add(df_subset.index[j])
-                                    else:
-                                        indices_a_eliminar.add(df_subset.index[i])
-
-                # Eliminar duplicados similares
-                f_df = f_df.drop(index=indices_a_eliminar, errors='ignore')
-                print(f"   Después de eliminar duplicados similares: {len(f_df)}")
-
-                # Eliminar columna temporal
-                f_df = f_df.drop(columns=['Title_Normalized'], errors='ignore')
+                # === 5. ELIMINAR COLUMNA TEMPORAL (si existe) ===
+                # f_df = f_df.drop(columns=['Title_Normalized'], errors='ignore')
 
                 print(f"📊 Total después de desduplicación: {len(f_df)}")
 
