@@ -7479,9 +7479,12 @@ if modo_app == "Boletín":
         else:
             m_num = [meses_dict[m] for m in m_sel]
             a_num = [int(a) for a in a_sel]
-            sd = f"01.{min(m_num):02d}.{min(a_num)}"
-            ed = f"{calendar.monthrange(max(a_num), max(m_num))[1]:02d}.{max(m_num):02d}.{max(a_num)}"
-
+            mes_seleccionado = m_num[0]
+            año_seleccionado = a_num[0]
+            sd = f"01.{mes_seleccionado:02d}.{año_seleccionado}"
+            ultimo_dia = calendar.monthrange(año_seleccionado, mes_seleccionado)[1]
+            ed = f"{ultimo_dia:02d}.{mes_seleccionado:02d}.{año_seleccionado}"
+            print(f"📅 Rango de fechas CORREGIDO: {sd} a {ed}")
             all_dfs = []
             prog = st.progress(0)
             txt = st.empty()
@@ -7759,15 +7762,11 @@ if modo_app == "Boletín":
                 
                 # 1. Eliminar duplicados exactos por Link
                 # Eliminar duplicados por Link, pero conservando los de FMI
+                # === 1. ELIMINAR DUPLICADOS EXACTOS POR LINK (VERSIÓN SUAVE) ===
+                # Solo eliminar duplicados donde la URL es IDÉNTICA
                 f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
+                print(f"   Después de eliminar duplicados EXACTOS por Link: {len(f_df)}")
                 # Asegurar que FMI no se pierda
-                if len(f_df[f_df['Organismo'] == 'FMI']) < 30:
-                    print("⚠️ Recuperando documentos FMI perdidos...")
-                    # Los documentos FMI ya están en all_dfs, los volvemos a agregar
-                    fmi_recuperados = pd.concat([df for df in all_dfs if 'FMI' in df['Organismo'].values], ignore_index=True)
-                    fmi_recuperados = fmi_recuperados.drop_duplicates(subset=['Link'], keep='first')
-                    f_df = pd.concat([f_df[~f_df['Organismo'].isin(['FMI'])], fmi_recuperados], ignore_index=True)
-                print(f"   Después de eliminar duplicados por Link: {len(f_df)}")
 
                 # 2. Eliminar duplicados por Título (normalizado)
                 f_df['Title_Normalized'] = f_df['Title'].str.lower()
@@ -7780,6 +7779,18 @@ if modo_app == "Boletín":
                 # Eliminar duplicados por título normalizado, manteniendo el primero (el más reciente por fecha)
                 f_df = f_df.sort_values('Date', ascending=False).drop_duplicates(subset=['Title_Normalized'], keep='first')
                 print(f"   Después de eliminar duplicados por título: {len(f_df)}")
+
+                # === 🆕 RECUPERAR DOCUMENTOS FMI ELIMINADOS ===
+                fmi_eliminados = f_df_before_title[
+                    (f_df_before_title['Organismo'] == 'FMI') & 
+                    (~f_df_before_title['Title_Normalized'].isin(f_df['Title_Normalized']))
+                ]
+
+                if not fmi_eliminados.empty:
+                    f_df = pd.concat([f_df, fmi_eliminados], ignore_index=True)
+                    print(f"   ✅ Recuperados {len(fmi_eliminados)} documentos FMI que se estaban perdiendo")
+                else:
+                    print("   ℹ️ No se perdieron documentos FMI en la desduplicación")
 
                 # 🔍 DEPURACIÓN: Identificar los títulos eliminados
                 eliminados_titulo = f_df_before_title[~f_df_before_title['Title_Normalized'].isin(f_df['Title_Normalized'])]
@@ -7794,7 +7805,7 @@ if modo_app == "Boletín":
 
                 # 3. Eliminar duplicados que sean casi idénticos (similitud de título > 90%)
                 # Esto ayuda con títulos como "Preserving stability..." vs "Preserving Stability..."
-                def is_similar(title1, title2, threshold=0.9):
+                def is_similar(title1, title2, threshold=0.95):
                     """Compara similitud entre dos títulos usando secuencia de palabras"""
                     words1 = set(title1.lower().split())
                     words2 = set(title2.lower().split())
@@ -7909,7 +7920,7 @@ if modo_app == "Boletín":
 
                 all_dfs = []
                 
-                                # ===== CÓDIGO DE EXTRACCIÓN COPIADO DEL BOTÓN 1 =====
+                # ===== CÓDIGO DE EXTRACCIÓN COPIADO DEL BOTÓN 1 =====
                 # (copias TODO desde "prog = st.progress(0)" hasta "txt.empty()")
                 prog = st.progress(0)
                 txt = st.empty()
@@ -8107,7 +8118,23 @@ if modo_app == "Boletín":
                     f_df = pd.concat(all_dfs, ignore_index=True)
 
                     # Eliminar duplicados
-                    f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
+                    # Reemplazar esta línea:
+                    #f_df = f_df.drop_duplicates(subset=['Link'], keep='first')
+                    # Con esto:
+                    def normalizar_url(url):
+                        """Elimina parámetros de seguimiento y normaliza URLs"""
+                        if not url:
+                            return url
+                        # Eliminar todo después de ? o #
+                        url_base = re.split(r'[?#]', url)[0]
+                        # Eliminar trailing slash
+                        url_base = url_base.rstrip('/')
+                        return url_base
+
+                    # Aplicar normalización y luego eliminar duplicados
+                    f_df['Link_Normalized'] = f_df['Link'].apply(normalizar_url)
+                    f_df = f_df.drop_duplicates(subset=['Link_Normalized'], keep='first')
+                    f_df = f_df.drop(columns=['Link_Normalized'])
 
                     # Añadir auditoría para FMI
                     def obtener_fuente(row):
