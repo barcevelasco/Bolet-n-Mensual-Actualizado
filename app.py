@@ -6534,37 +6534,79 @@ def load_data_bde(start_date_str, end_date_str):
             nombre = None
             cargo = None
             
+            # ========== MÉTODO 1: Buscar línea que contiene el cargo ==========
             for i, linea in enumerate(lineas):
                 linea_limpia = linea.strip()
                 
+                # Buscar "Governor" o "Gobernador"
                 if re.search(r'Governor|Gobernador', linea_limpia, re.IGNORECASE):
                     cargo = "Governor"
-                    if i > 0 and lineas[i-1].strip() and len(lineas[i-1].strip().split()) >= 2:
-                        nombre = lineas[i-1].strip()
-                    elif i + 1 < len(lineas) and lineas[i+1].strip() and len(lineas[i+1].strip().split()) >= 2:
-                        nombre = lineas[i+1].strip()
-                    break
+                    # Buscar nombre en líneas cercanas (3 líneas arriba o abajo)
+                    for offset in [-1, -2, -3, 1, 2, 3]:
+                        idx = i + offset
+                        if 0 <= idx < len(lineas):
+                            posible_nombre = lineas[idx].strip()
+                            # Verificar que parezca un nombre (2-4 palabras, sin mayúsculas sostenidas)
+                            if (len(posible_nombre.split()) >= 2 and 
+                                not any(p in posible_nombre.upper() for p in ['DIRECTOR', 'GENERAL', 'DEPARTAMENTO', 'SECRETARÍA', 'MINISTERIO', 'GOBIERNO', 'BANCO', 'ESPAÑA', 'MADRID', 'BANCO DE ESPAÑA'])):
+                                nombre = posible_nombre
+                                break
+                    if nombre:
+                        break
+                        
+                # Buscar "Deputy Governor" o "Subgobernador"
                 elif re.search(r'Deputy Governor|Subgobernador', linea_limpia, re.IGNORECASE):
                     cargo = "Deputy Governor"
-                    if i > 0 and lineas[i-1].strip() and len(lineas[i-1].strip().split()) >= 2:
-                        nombre = lineas[i-1].strip()
-                    elif i + 1 < len(lineas) and lineas[i+1].strip() and len(lineas[i+1].strip().split()) >= 2:
-                        nombre = lineas[i+1].strip()
-                    break
+                    # Buscar nombre en líneas cercanas
+                    for offset in [-1, -2, -3, 1, 2, 3]:
+                        idx = i + offset
+                        if 0 <= idx < len(lineas):
+                            posible_nombre = lineas[idx].strip()
+                            if (len(posible_nombre.split()) >= 2 and 
+                                not any(p in posible_nombre.upper() for p in ['DIRECTOR', 'GENERAL', 'DEPARTAMENTO', 'SECRETARÍA', 'MINISTERIO', 'GOBIERNO', 'BANCO', 'ESPAÑA', 'BANCO DE ESPAÑA'])):
+                                nombre = posible_nombre
+                                break
+                    if nombre:
+                        break
             
+            # ========== MÉTODO 2: Si no se encontró por cargo, buscar líneas que parezcan nombres ==========
             if not nombre:
                 for linea in lineas[:15]:
                     linea_limpia = linea.strip()
-                    if re.match(r'^[A-ZÁÉÍÓÚÑ]{2,}(?:\s+[A-ZÁÉÍÓÚÑ]{2,}){1,3}$', linea_limpia):
-                        if not any(palabra in linea_limpia for palabra in ['DIRECTOR', 'GENERAL', 'DEPARTAMENTO', 'SECRETARÍA', 'MINISTERIO', 'GOBIERNO', 'BANCO', 'ESPAÑA', 'MADRID']):
+                    
+                    # Patrón: "Soledad Núñez", "Pablo Hernández de Cos", "José Luis Escrivá"
+                    # Nombres con 2-4 palabras, comenzando con mayúscula, con espacios
+                    if re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}$', linea_limpia):
+                        # Excluir palabras que no son nombres
+                        if not any(palabra in linea_limpia for palabra in ['DIRECTOR', 'GENERAL', 'DEPARTAMENTO', 'SECRETARÍA', 'MINISTERIO', 'GOBIERNO', 'BANCO', 'ESPAÑA', 'MADRID', 'SANTANDER', 'CONFERENCE']):
                             nombre = linea_limpia
+                            # Si encontramos un nombre, intentar encontrar su cargo
+                            for l in lineas:
+                                if 'Governor' in l or 'Gobernador' in l:
+                                    cargo = 'Governor'
+                                    break
+                                elif 'Deputy Governor' in l or 'Subgobernador' in l:
+                                    cargo = 'Deputy Governor'
+                                    break
                             break
             
+            # ========== MÉTODO 3: Buscar patrón "Nombre Apellido, Cargo" ==========
+            if not nombre:
+                match = re.search(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}),\s*(Governor|Deputy Governor|Subgobernador)', text)
+                if match:
+                    nombre = match.group(1)
+                    cargo = match.group(2)
+            
             if nombre:
+                # Limpiar el nombre
                 nombre = ' '.join(nombre.split())
+                # Capitalizar correctamente
                 nombre = nombre.title()
+                # Correcciones para apellidos con partículas
                 nombre = re.sub(r'\bDe\b', 'de', nombre)
                 nombre = re.sub(r'\bY\b', 'y', nombre)
+                nombre = re.sub(r'\bDel\b', 'del', nombre)
+                nombre = re.sub(r'\bLa\b', 'la', nombre)
                 return nombre, cargo
             
             return None, None
@@ -6586,15 +6628,15 @@ def load_data_bde(start_date_str, end_date_str):
             'conference on the spanish economy',  # Soledad Núñez tiene PDF de discurso
             'deputy governor. conference on the',  # Mismo caso
             'subgobernadora. conferencia sobre',   # Versión en español
+            'deputy governor. spanish financial press',  # Otro discurso
+            'subgobernadora. premios de periodismo',  # En español
         ]
         for excepcion in excepciones:
             if excepcion in titulo_lower:
                 return True
         
         # ========== 2. PALABRAS CLAVE DE EXCLUSIÓN ==========
-        # Si el título contiene alguna de estas, NO es un discurso
         palabras_excluir = [
-            # Presentaciones y reportes (que NO son discursos)
             'presentación', 'presentacion', 'presentation of',
             'annual report', 'memoria anual',
             'summary', 'resumen ejecutivo',
@@ -6607,21 +6649,15 @@ def load_data_bde(start_date_str, end_date_str):
             'interview', 'entrevista',
             'article', 'artículo',
             'blog post',
-            # Conferencias que NO son discursos (sin autor)
-            '5th banco de españa',
-            'banco de españa-cemfi-uimp',
         ]
         
         # ========== 3. VERIFICAR SI TIENE AUTOR (NOMBRE AL INICIO) ==========
-        # Patrón: "Nombre Apellido: Título" o "Nombre Apellido - Título"
         tiene_autor = bool(re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+[:：\-–—]', titulo))
         
         # ========== 4. LÓGICA DE FILTRADO ==========
         
         # Caso especial: Si tiene autor Y es una conferencia, es un discurso
-        # Ejemplo: "Soledad Núñez: Conference on the Spanish Economy"
         if tiene_autor and 'conference' in titulo_lower:
-            # Verificar que no sea una presentación
             es_presentacion = any(p in titulo_lower for p in ['presentation of', 'presentación'])
             if not es_presentacion:
                 return True
@@ -6633,13 +6669,11 @@ def load_data_bde(start_date_str, end_date_str):
                 if p in titulo_lower:
                     return True
             # Si tiene autor pero no tiene palabras de discurso, lo incluimos
-            # (asumimos que es un discurso a menos que sea una presentación)
             es_presentacion = any(p in titulo_lower for p in ['presentation of', 'presentación', 'slides', 'ppt'])
             if not es_presentacion:
                 return True
         
         # ========== 5. PALABRAS CLAVE DE INCLUSIÓN ==========
-        # Si el título contiene alguna de estas, ES un discurso
         palabras_incluir = [
             'speech', 'discurso',
             'remarks', 'palabras',
@@ -6649,6 +6683,7 @@ def load_data_bde(start_date_str, end_date_str):
             'address', 'intervención',
             'statement', 'declaración',
             'testimony', 'testimonio',
+            'conference',  # <-- AÑADIDO: Conferencias con autor son discursos
         ]
         
         for palabra in palabras_incluir:
@@ -6661,72 +6696,120 @@ def load_data_bde(start_date_str, end_date_str):
                 return False
         
         # ========== 7. FALBACK ==========
-        # Si no está claro, lo incluimos (mejor falso positivo que falso negativo)
-        # Pero solo si tiene más de 4 palabras (para evitar títulos muy cortos)
         if len(titulo.split()) >= 4:
             return True
         
         return False
-
     try:
         print(f"📡 Solicitando página: {url}")
-        response = requests.get(url, headers=headers, timeout=15)
         
-        if response.status_code != 200:
-            print(f"❌ Error al acceder a la página: {response.status_code}")
-            return pd.DataFrame()
+        # ========== NUEVO: VARIABLES DE PAGINACIÓN ==========
+        pagina_actual = 1
+        max_paginas = 25  # Límite de seguridad
+        todos_los_items = []
+        total_paginas_detectadas = None
         
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # ========== BUSCAR ELEMENTOS CON MÚLTIPLES SELECTORES ==========
-        items = []
-        
-        selectores = [
-            'div.block-search-result',
-            'div.block-search-result--image',
-            'article.search-result',
-            'li.search-result',
-            'div.search-result',
-            'div.result-item',
-            'div.teaser',
-            'div.news-item',
-            'article.news',
-            'div.listing-item',
-            'div.item',
-            'div[class*="search-result"]',
-            'div[class*="result"]',
-            'div[class*="news"]',
-            'div[class*="publication"]',
-            '.search-results article',
-            '.search-results li',
-            '.results article',
-            '.results li',
-        ]
-        
-        for selector in selectores:
-            encontrados = soup.select(selector)
-            if encontrados:
-                print(f"   ✅ Selector '{selector}' encontró {len(encontrados)} elementos")
-                items = encontrados
+        # ========== NUEVO: BUCLE DE PAGINACIÓN ==========
+        while pagina_actual <= max_paginas:
+            # Construir URL con paginación
+            if pagina_actual == 1:
+                url_pagina = url
+            else:
+                # Añadir parámetro page a la URL
+                if '?' in url:
+                    url_pagina = f"{url}&page={pagina_actual}"
+                else:
+                    url_pagina = f"{url}?page={pagina_actual}"
+            
+            print(f"   📄 Procesando página {pagina_actual}: {url_pagina}")
+            
+            response = requests.get(url_pagina, headers=headers, timeout=15)
+            
+            if response.status_code != 200:
+                print(f"   ❌ Error al acceder a página {pagina_actual}: {response.status_code}")
                 break
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # ========== BUSCAR ELEMENTOS CON MÚLTIPLES SELECTORES ==========
+            items_pagina = []
+            
+            selectores = [
+                'div.block-search-result',
+                'div.block-search-result--image',
+                'article.search-result',
+                'li.search-result',
+                'div.search-result',
+                'div.result-item',
+                'div.teaser',
+                'div.news-item',
+                'article.news',
+                'div.listing-item',
+                'div.item',
+                'div[class*="search-result"]',
+                'div[class*="result"]',
+                'div[class*="news"]',
+                'div[class*="publication"]',
+                '.search-results article',
+                '.search-results li',
+                '.results article',
+                '.results li',
+            ]
+            
+            for selector in selectores:
+                encontrados = soup.select(selector)
+                if encontrados:
+                    items_pagina = encontrados
+                    break
+            
+            if not items_pagina:
+                print("   ⚠️ Buscando elementos por estructura genérica...")
+                for div in soup.find_all(['div', 'article', 'li']):
+                    has_link = div.find('a', href=True)
+                    has_date = div.find(string=re.compile(r'\d{2}/\d{2}/\d{4}'))
+                    if has_link and has_date:
+                        items_pagina.append(div)
+                print(f"   📚 Encontrados {len(items_pagina)} elementos por estructura genérica")
+            
+            if not items_pagina:
+                print(f"   📭 No se encontraron elementos en página {pagina_actual}")
+                break
+            
+            print(f"   📚 Elementos encontrados en página {pagina_actual}: {len(items_pagina)}")
+            todos_los_items.extend(items_pagina)
+            
+            # ========== NUEVO: DETECTAR NÚMERO TOTAL DE PÁGINAS ==========
+            if total_paginas_detectadas is None:
+                paginador = soup.find('div', class_='block-pagination')
+                if paginador:
+                    # Buscar el enlace a la última página
+                    ultimo_link = paginador.find('a', href=lambda x: x and 'page=' in x)
+                    if ultimo_link:
+                        match = re.search(r'page=(\d+)', ultimo_link.get('href', ''))
+                        if match:
+                            total_paginas_detectadas = int(match.group(1))
+                            print(f"   📊 Total de páginas detectadas: {total_paginas_detectadas}")
+                            max_paginas = total_paginas_detectadas
+            
+            # Si esta página tiene menos de 10 elementos, probablemente es la última
+            if len(items_pagina) < 10 and pagina_actual > 1:
+                print(f"   📭 Página {pagina_actual} tiene menos de 10 elementos, asumiendo última página")
+                break
+            
+            pagina_actual += 1
+            time.sleep(0.5)  # Pequeña pausa entre páginas
         
-        if not items:
-            print("   ⚠️ Buscando elementos por estructura genérica...")
-            for div in soup.find_all(['div', 'article', 'li']):
-                has_link = div.find('a', href=True)
-                has_date = div.find(string=re.compile(r'\d{2}/\d{2}/\d{4}'))
-                if has_link and has_date:
-                    items.append(div)
-            print(f"   📚 Encontrados {len(items)} elementos por estructura genérica")
-        
-        if not items:
-            print("⚠️ No se encontraron elementos en la página")
+        if not todos_los_items:
+            print("⚠️ No se encontraron elementos en ninguna página")
             with open("bde_debug.html", "w", encoding="utf-8") as f:
                 f.write(response.text)
             print("   💾 HTML guardado en bde_debug.html para depuración")
             return pd.DataFrame()
         
-        print(f"   📚 Elementos encontrados: {len(items)}")
+        print(f"   📚 Total de elementos encontrados en todas las páginas: {len(todos_los_items)}")
+        
+        # ========== AHORA PROCESAR TODOS LOS ITEMS ==========
+        items = todos_los_items
         
         for item in items:
             try:
@@ -6771,11 +6854,25 @@ def load_data_bde(start_date_str, end_date_str):
                 if not raw_title or len(raw_title) < 5:
                     continue
                 
-                # === FILTRO: VERIFICAR SI ES UN DISCURSO ===
-                if not es_discurso(raw_title):
+                # ===== NUEVO: EXTRAER CARGO DEL TÍTULO =====
+                cargo_match = re.search(r'(Governor|Deputy Governor|DG Economía|DG de Conducta|DG de Supervisión)', raw_title, re.IGNORECASE)
+                cargo = cargo_match.group(1) if cargo_match else None
+                
+                # ===== NUEVO: VERIFICAR SI ES UN DISCURSO CON MEJORA =====
+                es_discurso_valido = es_discurso(raw_title)
+                
+                # Si no es discurso según la función, pero tiene cargo y no es presentación, lo incluimos
+                if not es_discurso_valido and cargo:
+                    # Verificar que no sea una presentación
+                    es_presentacion = any(p in raw_title.lower() for p in ['presentación', 'presentacion', 'presentation of', 'annual report'])
+                    if not es_presentacion:
+                        es_discurso_valido = True
+                        print(f"      ✅ Incluido por tener cargo: {raw_title[:50]}...")
+
+                if not es_discurso_valido:
                     print(f"      ⏭️ Excluido (no es discurso): {raw_title[:50]}...")
                     continue
-                
+
                 # === 2. EXTRAER FECHA ===
                 date_elem = None
                 
@@ -6823,12 +6920,14 @@ def load_data_bde(start_date_str, end_date_str):
                 pdf_link = None
                 autor = None
                 titulo_final = raw_title
-                
+                cargo_extraido = cargo  # Guardamos el cargo que extrajimos antes
+
                 try:
                     page_response = requests.get(link, headers=headers, timeout=10)
                     if page_response.status_code == 200:
                         page_soup = BeautifulSoup(page_response.text, 'html.parser')
                         
+                        # Buscar PDF
                         for a in page_soup.find_all('a', href=True):
                             href = a['href']
                             if href.endswith('.pdf') or '.pdf' in href.lower():
@@ -6843,13 +6942,16 @@ def load_data_bde(start_date_str, end_date_str):
                         if not pdf_link:
                             print(f"      ⏭️ Excluido (sin PDF, probablemente video): {raw_title[:50]}...")
                             continue
-                        # ===================================================================
                         
                         if pdf_link:
                             print(f"      📄 PDF encontrado, extrayendo autor...")
-                            autor, cargo = extraer_autor_y_cargo_desde_pdf(pdf_link)
+                            autor, cargo_pdf = extraer_autor_y_cargo_desde_pdf(pdf_link)
                             if autor:
-                                print(f"      📝 Autor extraído: {autor}")
+                                print(f"      📝 Autor extraído del PDF: {autor}")
+                            elif cargo_extraido:
+                                # Si no se encontró autor en el PDF pero tenemos cargo, buscar nombre en el título
+                                autor = cargo_extraido
+                                print(f"      📝 Usando cargo como autor: {autor}")
                 except Exception as e:
                     print(f"      ⚠️ Error accediendo a página individual: {e}")
                     continue
