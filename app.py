@@ -3239,12 +3239,16 @@ def load_investigacion_bpi(start_date_str, end_date_str):
 @st.cache_data(show_spinner=False)
 def load_investigacion_bid_en(start_date_str, end_date_str):
     """
-    Extrae Working Papers del BID en inglés usando cloudscraper
-    (ya funciona - 6 documentos en tu log)
+    Extrae Working Papers del BID en inglés usando undetected-chromedriver
     """
-    import cloudscraper
+    import undetected_chromedriver as uc
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException
     from bs4 import BeautifulSoup
     import datetime
+    import time
     import re
     
     try:
@@ -3259,20 +3263,13 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
     page = 0
     max_pages = 3
     
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'mobile': False
-        },
-        delay=5
-    )
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-    }
+    options = uc.ChromeOptions()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920,1080')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument('--disable-gpu')
     
     meses_en = {
         'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
@@ -3281,28 +3278,51 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
         'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
     }
     
-    print("🔍 Iniciando BID Inglés con cloudscraper...")
-    
-    while page < max_pages:
-        url = f"https://publications.iadb.org/en?f%5B0%5D=type%3AWorking%20Papers&page={page}"
-        print(f"📄 Página {page+1}: {url}")
+    try:
+        print("🔍 Iniciando BID Inglés con undetected-chromedriver...")
+        print("   ⏳ Esperando resolución de Cloudflare (hasta 60 segundos)...")
         
-        try:
-            response = scraper.get(url, headers=headers, timeout=30)
+        # 🔥 ELIMINADO: patcher.install()
+        driver = uc.Chrome(options=options)
+        time.sleep(2)
+        
+        while page < max_pages:
+            url = f"https://publications.iadb.org/en?f%5B0%5D=type%3AWorking%20Papers&page={page}"
+            print(f"📄 Página {page+1}: {url}")
             
-            if response.status_code != 200:
-                print(f"   ❌ Error HTTP: {response.status_code}")
-                break
+            driver.get(url)
             
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Espera inteligente para Cloudflare
+            print("   ⏳ Esperando que Cloudflare resuelva la verificación...")
+            max_wait = 60
+            start_time = time.time()
+            cloudflare_detected = False
             
-            # Usar el selector correcto (views-row-internal)
+            while time.time() - start_time < max_wait:
+                if "Just a moment" in driver.page_source or "verificando" in driver.page_source.lower():
+                    cloudflare_detected = True
+                    print(f"   ⏳ Cloudflare aún presente, esperando... ({int(time.time() - start_time)}s)")
+                    time.sleep(5)
+                else:
+                    if cloudflare_detected:
+                        print(f"   ✅ Cloudflare resuelto después de {int(time.time() - start_time)} segundos")
+                    break
+            
+            time.sleep(5)
+            
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
             items = soup.find_all('div', class_='views-row-internal')
             
             if not items:
                 items = soup.find_all('div', class_='views-row')
                 if not items:
-                    print(f"   📭 No hay artículos en página {page+1}")
+                    if "Just a moment" in driver.page_source:
+                        print("   ❌ Cloudflare no se resolvió después de 60 segundos")
+                    else:
+                        print(f"   📭 No hay artículos en página {page+1}")
+                        with open(f"bid_debug_page_{page}.html", "w", encoding="utf-8") as f:
+                            f.write(driver.page_source)
+                        print(f"   💾 HTML guardado en bid_debug_page_{page}.html")
                     break
             
             print(f"   📚 Artículos: {len(items)}")
@@ -3337,7 +3357,6 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
                     else:
                         continue
                     
-                    # Filtrar por rango de fechas
                     if parsed_date.year < start_date.year or parsed_date.year > end_date.year:
                         continue
                     if parsed_date.year == start_date.year and parsed_date.month < start_date.month:
@@ -3355,15 +3374,19 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
                         print(f"   ✅ {parsed_date.strftime('%Y-%m')}: {titulo[:50]}...")
                         
                 except Exception as e:
-                    print(f"   ⚠️ Error procesando artículo: {e}")
                     continue
             
             page += 1
-            time.sleep(2)
-            
-        except Exception as e:
-            print(f"   ❌ Error: {e}")
-            break
+            time.sleep(3)
+        
+        driver.quit()
+        
+    except Exception as e:
+        print(f"❌ Error en BID Inglés: {e}")
+        import traceback
+        traceback.print_exc()
+        if 'driver' in locals():
+            driver.quit()
     
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -3373,19 +3396,24 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
         print(f"\n✅ BID Inglés: {len(df)} documentos")
     else:
         print("\n⚠️ No se encontraron documentos del BID (Inglés)")
+        print("   📌 Revisa el archivo bid_debug_page_0.html para ver qué está cargando realmente")
     
     return df
 
 @st.cache_data(show_spinner=False)
 def load_investigacion_bid(start_date_str, end_date_str):
     """
-    Extrae Working Papers del BID en español usando cloudscraper
+    Extrae Working Papers del BID en español usando undetected-chromedriver
     """
-    import cloudscraper
+    import undetected_chromedriver as uc
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException
     from bs4 import BeautifulSoup
     import datetime
-    import re
     import time
+    import re
     
     try:
         start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
@@ -3399,20 +3427,13 @@ def load_investigacion_bid(start_date_str, end_date_str):
     page = 0
     max_pages = 3
     
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'mobile': False
-        },
-        delay=5
-    )
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'es-ES,es;q=0.9',
-    }
+    options = uc.ChromeOptions()
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--window-size=1920,1080')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument('--disable-gpu')
     
     meses_es = {
         'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
@@ -3421,27 +3442,50 @@ def load_investigacion_bid(start_date_str, end_date_str):
         'jul': 7, 'ago': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dic': 12
     }
     
-    print("🔍 Iniciando BID Español con cloudscraper...")
-    
-    while page < max_pages:
-        url = f"https://publications.iadb.org/es?f%5B0%5D=type%3A4633&f%5B1%5D=type%3ADocumentos%20de%20Trabajo&page={page}"
-        print(f"📄 Página {page+1}: {url}")
+    try:
+        print("🔍 Iniciando BID Español con undetected-chromedriver...")
+        print("   ⏳ Esperando resolución de Cloudflare (hasta 60 segundos)...")
         
-        try:
-            response = scraper.get(url, headers=headers, timeout=30)
+        # 🔥 ELIMINADO: patcher.install()
+        driver = uc.Chrome(options=options)
+        time.sleep(2)
+        
+        while page < max_pages:
+            url = f"https://publications.iadb.org/es?f%5B0%5D=type%3A4633&f%5B1%5D=type%3ADocumentos%20de%20Trabajo&page={page}"
+            print(f"📄 Página {page+1}: {url}")
             
-            if response.status_code != 200:
-                print(f"   ❌ Error HTTP: {response.status_code}")
-                break
+            driver.get(url)
             
-            soup = BeautifulSoup(response.text, 'html.parser')
+            print("   ⏳ Esperando que Cloudflare resuelva la verificación...")
+            max_wait = 60
+            start_time = time.time()
+            cloudflare_detected = False
             
+            while time.time() - start_time < max_wait:
+                if "Just a moment" in driver.page_source or "verificando" in driver.page_source.lower():
+                    cloudflare_detected = True
+                    print(f"   ⏳ Cloudflare aún presente, esperando... ({int(time.time() - start_time)}s)")
+                    time.sleep(5)
+                else:
+                    if cloudflare_detected:
+                        print(f"   ✅ Cloudflare resuelto después de {int(time.time() - start_time)} segundos")
+                    break
+            
+            time.sleep(5)
+            
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
             items = soup.find_all('div', class_='views-row-internal')
             
             if not items:
                 items = soup.find_all('div', class_='views-row')
                 if not items:
-                    print(f"   📭 No hay artículos en página {page+1}")
+                    if "Just a moment" in driver.page_source:
+                        print("   ❌ Cloudflare no se resolvió después de 60 segundos")
+                    else:
+                        print(f"   📭 No hay artículos en página {page+1}")
+                        with open(f"bid_debug_es_page_{page}.html", "w", encoding="utf-8") as f:
+                            f.write(driver.page_source)
+                        print(f"   💾 HTML guardado en bid_debug_es_page_{page}.html")
                     break
             
             print(f"   📚 Artículos: {len(items)}")
@@ -3495,15 +3539,19 @@ def load_investigacion_bid(start_date_str, end_date_str):
                         print(f"   ✅ {parsed_date.strftime('%Y-%m')}: {titulo[:50]}...")
                         
                 except Exception as e:
-                    print(f"   ⚠️ Error procesando artículo: {e}")
                     continue
             
             page += 1
-            time.sleep(2)
-            
-        except Exception as e:
-            print(f"   ❌ Error: {e}")
-            break
+            time.sleep(3)
+        
+        driver.quit()
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        if 'driver' in locals():
+            driver.quit()
     
     df = pd.DataFrame(rows)
     if not df.empty:
