@@ -3239,22 +3239,13 @@ def load_investigacion_bpi(start_date_str, end_date_str):
 @st.cache_data(show_spinner=False)
 def load_investigacion_bid_en(start_date_str, end_date_str):
     """
-    Extrae Working Papers del BID en inglés usando undetected-chromedriver
+    Extrae Working Papers del BID en inglés usando cloudscraper
+    (ya funciona - 6 documentos en tu log)
     """
-    import undetected_chromedriver as uc
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
+    import cloudscraper
     from bs4 import BeautifulSoup
     import datetime
-    import time
     import re
-    import ssl
-    import urllib3
-    
-    # 🔧 SOLUCIÓN PARA REDES CORPORATIVAS
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    ssl._create_default_https_context = ssl._create_unverified_context
     
     try:
         start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
@@ -3263,19 +3254,25 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
     except:
         start_date = datetime.datetime(2000, 1, 1)
         end_date = datetime.datetime.now()
-        print(f"⚠️ Error en fechas, usando rango por defecto")
     
     rows = []
     page = 0
     max_pages = 3
     
-    options = uc.ChromeOptions()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--disable-gpu')
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'mobile': False
+        },
+        delay=5
+    )
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+    }
     
     meses_en = {
         'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
@@ -3284,35 +3281,29 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
         'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
     }
     
-    try:
-        print("🔍 Iniciando BID Inglés...")
-        driver = uc.Chrome(options=options, version_main=146)
-        time.sleep(2)
+    print("🔍 Iniciando BID Inglés con cloudscraper...")
+    
+    while page < max_pages:
+        url = f"https://publications.iadb.org/en?f%5B0%5D=type%3AWorking%20Papers&page={page}"
+        print(f"📄 Página {page+1}: {url}")
         
-        while page < max_pages:
-            url = f"https://publications.iadb.org/en?f%5B0%5D=type%3AWorking%20Papers&page={page}"
-            print(f"📄 Página {page+1}: {url}")
+        try:
+            response = scraper.get(url, headers=headers, timeout=30)
             
-            driver.get(url)
-            time.sleep(10)
+            if response.status_code != 200:
+                print(f"   ❌ Error HTTP: {response.status_code}")
+                break
             
-            if "Just a moment" in driver.page_source:
-                print("   ⚠️ Cloudflare detectado, esperando...")
-                time.sleep(15)
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            try:
-                WebDriverWait(driver, 45).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "views-row"))
-                )
-            except:
-                pass
-            
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            items = soup.find_all('div', class_='views-row')
+            # Usar el selector correcto (views-row-internal)
+            items = soup.find_all('div', class_='views-row-internal')
             
             if not items:
-                print(f"   📭 No hay artículos en página {page+1}")
-                break
+                items = soup.find_all('div', class_='views-row')
+                if not items:
+                    print(f"   📭 No hay artículos en página {page+1}")
+                    break
             
             print(f"   📚 Artículos: {len(items)}")
             
@@ -3346,7 +3337,7 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
                     else:
                         continue
                     
-                    # Filtrar por año y mes
+                    # Filtrar por rango de fechas
                     if parsed_date.year < start_date.year or parsed_date.year > end_date.year:
                         continue
                     if parsed_date.year == start_date.year and parsed_date.month < start_date.month:
@@ -3368,14 +3359,11 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
                     continue
             
             page += 1
-            time.sleep(3)
-        
-        driver.quit()
-        
-    except Exception as e:
-        print(f"❌ Error en BID Inglés: {e}")
-        import traceback
-        traceback.print_exc()
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+            break
     
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -3388,23 +3376,16 @@ def load_investigacion_bid_en(start_date_str, end_date_str):
     
     return df
 
-## BID ESPAÑOL 
-
 @st.cache_data(show_spinner=False)
 def load_investigacion_bid(start_date_str, end_date_str):
-    import undetected_chromedriver as uc
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
+    """
+    Extrae Working Papers del BID en español usando cloudscraper
+    """
+    import cloudscraper
     from bs4 import BeautifulSoup
     import datetime
-    import time
     import re
-    import ssl
-    import urllib3
-    
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    ssl._create_default_https_context = ssl._create_unverified_context
+    import time
     
     try:
         start_date = datetime.datetime.strptime(start_date_str, '%d.%m.%Y')
@@ -3418,48 +3399,50 @@ def load_investigacion_bid(start_date_str, end_date_str):
     page = 0
     max_pages = 3
     
-    options = uc.ChromeOptions()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--disable-gpu')
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'mobile': False
+        },
+        delay=5
+    )
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9',
+    }
     
     meses_es = {
         'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
         'julio': 7, 'agosto': 8, 'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12,
+        'ene': 1, 'feb': 2, 'mar': 3, 'abr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'ago': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dic': 12
     }
     
-    try:
-        print("🔍 Iniciando BID Español...")
-        driver = uc.Chrome(options=options, version_main=146)
-        time.sleep(2)
+    print("🔍 Iniciando BID Español con cloudscraper...")
+    
+    while page < max_pages:
+        url = f"https://publications.iadb.org/es?f%5B0%5D=type%3A4633&f%5B1%5D=type%3ADocumentos%20de%20Trabajo&page={page}"
+        print(f"📄 Página {page+1}: {url}")
         
-        while page < max_pages:
-            url = f"https://publications.iadb.org/es?f%5B0%5D=type%3A4633&f%5B1%5D=type%3ADocumentos%20de%20Trabajo&page={page}"
-            print(f"📄 Página {page+1}: {url}")
+        try:
+            response = scraper.get(url, headers=headers, timeout=30)
             
-            driver.get(url)
-            time.sleep(10)
+            if response.status_code != 200:
+                print(f"   ❌ Error HTTP: {response.status_code}")
+                break
             
-            if "Just a moment" in driver.page_source:
-                print("   ⚠️ Cloudflare detectado, esperando...")
-                time.sleep(15)
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            try:
-                WebDriverWait(driver, 45).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "views-row"))
-                )
-            except:
-                pass
-            
-            soup = BeautifulSoup(driver.page_source, 'html.parser')
-            items = soup.find_all('div', class_='views-row')
+            items = soup.find_all('div', class_='views-row-internal')
             
             if not items:
-                print(f"   📭 No hay artículos en página {page+1}")
-                break
+                items = soup.find_all('div', class_='views-row')
+                if not items:
+                    print(f"   📭 No hay artículos en página {page+1}")
+                    break
             
             print(f"   📚 Artículos: {len(items)}")
             
@@ -3486,7 +3469,9 @@ def load_investigacion_bid(start_date_str, end_date_str):
                         if match:
                             mes_str = match.group(1).lower()
                             año = int(match.group(2))
-                            mes_num = meses_es.get(mes_str, 1)
+                            mes_num = meses_es.get(mes_str, None)
+                            if mes_num is None:
+                                mes_num = meses_es.get(mes_str[:3], 1)
                             parsed_date = datetime.datetime(año, mes_num, 1)
                         else:
                             continue
@@ -3505,20 +3490,20 @@ def load_investigacion_bid(start_date_str, end_date_str):
                             "Date": parsed_date,
                             "Title": titulo,
                             "Link": link,
-                            "Organismo": "BID"
+                            "Organismo": "BID (Español)"
                         })
                         print(f"   ✅ {parsed_date.strftime('%Y-%m')}: {titulo[:50]}...")
                         
                 except Exception as e:
+                    print(f"   ⚠️ Error procesando artículo: {e}")
                     continue
             
             page += 1
-            time.sleep(3)
-        
-        driver.quit()
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
+            time.sleep(2)
+            
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+            break
     
     df = pd.DataFrame(rows)
     if not df.empty:
@@ -7229,40 +7214,45 @@ def load_investigacion_bid_selenium_fallback(start_date_str, end_date_str):
     return df
 
 
-def load_investigacion_bid_unified(start_date_str, end_date_str):
-    """
-    UNIFICADOR: Prueba cloudscraper primero, si falla usa Selenium
-    """
-    print("="*50)
-    print("🔍 Iniciando extracción BID con estrategia unificada")
-    print("="*50)
-    
-    # Intentar primero con cloudscraper
-    try:
-        print("\n🚀 Estrategia 1: Cloudscraper")
-        df = load_investigacion_bid_cloudscraper(start_date_str, end_date_str)
-        if not df.empty:
-            print(f"✅ Cloudscraper exitoso: {len(df)} documentos")
-            return df
-        else:
-            print("⚠️ Cloudscraper no obtuvo resultados")
-    except Exception as e:
-        print(f"⚠️ Cloudscraper falló: {e}")
-    
-    # Fallback a Selenium
-    print("\n🚀 Estrategia 2: Selenium con delay largo")
-    try:
-        df = load_investigacion_bid_selenium_fallback(start_date_str, end_date_str)
-        if not df.empty:
-            print(f"✅ Selenium exitoso: {len(df)} documentos")
-            return df
-        else:
-            print("⚠️ Selenium no obtuvo resultados")
-    except Exception as e:
-        print(f"⚠️ Selenium falló: {e}")
-    
-    print("\n❌ Ambas estrategias fallaron para BID")
-    return pd.DataFrame()
+# ============================================================
+# FUNCIÓN ANULADA - Ya no se usa
+# ============================================================
+# @st.cache_data(show_spinner=False)
+# def load_investigacion_bid_unified(start_date_str, end_date_str):
+#     """
+#     UNIFICADOR: Prueba cloudscraper primero, si falla usa Selenium
+#     """
+#     print("="*50)
+#     print("🔍 Iniciando extracción BID con estrategia unificada")
+#     print("="*50)
+#     
+#     # Intentar primero con cloudscraper
+#     try:
+#         print("\n🚀 Estrategia 1: Cloudscraper")
+#         df = load_investigacion_bid_cloudscraper(start_date_str, end_date_str)
+#         if not df.empty:
+#             print(f"✅ Cloudscraper exitoso: {len(df)} documentos")
+#             return df
+#         else:
+#             print("⚠️ Cloudscraper no obtuvo resultados")
+#     except Exception as e:
+#         print(f"⚠️ Cloudscraper falló: {e}")
+#     
+#     # Fallback a Selenium
+#     print("\n🚀 Estrategia 2: Selenium con delay largo")
+#     try:
+#         df = load_investigacion_bid_selenium_fallback(start_date_str, end_date_str)
+#         if not df.empty:
+#             print(f"✅ Selenium exitoso: {len(df)} documentos")
+#             return df
+#         else:
+#             print("⚠️ Selenium no obtuvo resultados")
+#     except Exception as e:
+#         print(f"⚠️ Selenium falló: {e}")
+#     
+#     print("\n❌ Ambas estrategias fallaron para BID")
+#     return pd.DataFrame()
+# ============================================================
 
 # ==========================================
 # EXPORTACIÓN A WORD
@@ -7782,7 +7772,19 @@ if modo_app == "Boletín":
                 df = pd.DataFrame()
                 try:
                     if org == "BID": 
-                        df = load_investigacion_bid_unified(sd, ed)
+                        # 🔥 NUEVO: Llamar a las funciones por separado
+                        df_en = load_investigacion_bid_en(sd, ed)    # Inglés (cloudscraper)
+                        df_es = load_investigacion_bid(sd, ed)       # Español (undetected-chromedriver)
+                        
+                        # Combinar resultados
+                        dfs_a_unir = [d for d in [df_en, df_es] if not d.empty]
+                        if dfs_a_unir:
+                            df = pd.concat(dfs_a_unir, ignore_index=True)
+                            df = df.drop_duplicates(subset=['Link'])
+                            df = df.sort_values("Date", ascending=False)
+                        else:
+                            df = pd.DataFrame()
+                            
                     elif org == "BPI": df = load_investigacion_bpi(sd, ed)
                     elif org == "BM": df = load_investigacion_bm(sd, ed)
                     elif org == "CEMLA":
@@ -8594,7 +8596,19 @@ elif modo_app == "Categorías":
 
                     elif tipo_doc == "Investigación":
                         if o == "BID":
-                            df = load_investigacion_bid_unified(sd, ed)
+                            # 🔥 NUEVO: Llamar a las funciones por separado
+                            df_en = load_investigacion_bid_en(sd, ed)    # Inglés (cloudscraper)
+                            df_es = load_investigacion_bid(sd, ed)       # Español (undetected-chromedriver)
+                            
+                            # Combinar resultados
+                            dfs_a_unir = [d for d in [df_en, df_es] if not d.empty]
+                            if dfs_a_unir:
+                                df = pd.concat(dfs_a_unir, ignore_index=True)
+                                df = df.drop_duplicates(subset=['Link'])
+                                df = df.sort_values("Date", ascending=False)
+                            else:
+                                df = pd.DataFrame()
+                
                         elif o == "BPI":
                             df = load_investigacion_bpi(sd, ed)
                         elif o == "BM":
