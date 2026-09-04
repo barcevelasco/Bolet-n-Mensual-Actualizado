@@ -4278,6 +4278,7 @@ def load_discursos_boe(start_date_str, end_date_str):
 def load_discursos_fmi(start_date_str, end_date_str):
     """
     Extractor FMI - Discursos y Transcripts (Coveo API)
+    Con extracción de autor desde el título cuando speaker es "NA"
     """
     import datetime
     import requests
@@ -4303,7 +4304,6 @@ def load_discursos_fmi(start_date_str, end_date_str):
         "Accept": "application/json",
     }
 
-    # Incluir tanto SPEECHES como TRANSCRIPTS
     payload = {
         "aq": "@imftype==(\"Speech\",\"Transcript\") AND @syslanguage==\"English\"",
         "numberOfResults": 150,
@@ -4315,13 +4315,9 @@ def load_discursos_fmi(start_date_str, end_date_str):
         if not titulo:
             return titulo
         
-        # 1. Eliminar comillas
         titulo = titulo.strip('"').strip("'")
-        titulo = titulo.replace('\\"', '')
-        titulo = titulo.replace('"', '')
-        titulo = titulo.replace("'", "")
+        titulo = titulo.replace('\\"', '').replace('"', '').replace("'", "")
         
-        # 2. Eliminar sufijos comunes que son redundantes
         sufijos_redundantes = [
             r'\s*[-–—]\s*(?:Keynote\s+)?Speech\s+by\s+.*$',
             r'\s*[-–—]\s*(?:Opening\s+)?Remarks\s+by\s+.*$',
@@ -4334,17 +4330,43 @@ def load_discursos_fmi(start_date_str, end_date_str):
         for patron in sufijos_redundantes:
             titulo = re.sub(patron, '', titulo, flags=re.IGNORECASE)
         
-        # 3. Si el título comienza con el nombre del autor (sin cargo), eliminarlo
         if speaker_name and titulo.lower().startswith(speaker_name.lower()):
             titulo = titulo[len(speaker_name):].lstrip(': ').strip()
         
-        # 4. Limpiar espacios múltiples y caracteres sobrantes
         titulo = re.sub(r'\s+', ' ', titulo).strip()
-        
-        # 5. Eliminar puntuación redundante al inicio
         titulo = re.sub(r'^[,:;.\s]+', '', titulo)
         
         return titulo
+
+    def extraer_autor_del_titulo(titulo):
+        """
+        Intenta extraer el autor del título cuando speaker es "NA".
+        Busca patrones como "Opening Remarks by Petya Koeva Brooks" o "Speech by Nombre Apellido"
+        """
+        if not titulo:
+            return None
+        
+        # Patrón 1: "Opening Remarks at the July 2026 WEO Update Press Conference"
+        # Este caso específico lo tenemos mapeado
+        if "Opening Remarks at the July 2026 WEO Update Press Conference" in titulo:
+            return "Petya Koeva Brooks"
+        
+        # Patrón 2: "Speech by Nombre Apellido: Título"
+        match = re.search(r'(?i)Speech by ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*):', titulo)
+        if match:
+            return match.group(1).strip()
+        
+        # Patrón 3: "Remarks by Nombre Apellido"
+        match = re.search(r'(?i)Remarks by ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', titulo)
+        if match:
+            return match.group(1).strip()
+        
+        # Patrón 4: "Address by Nombre Apellido"
+        match = re.search(r'(?i)Address by ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', titulo)
+        if match:
+            return match.group(1).strip()
+        
+        return None
 
     try:
         print("   📡 Solicitando discursos y transcripts del FMI a Coveo API...")
@@ -4366,6 +4388,17 @@ def load_discursos_fmi(start_date_str, end_date_str):
                 elif not speaker:
                     speaker = "IMF Staff"
 
+                # 🔥 NUEVO: Si speaker es "NA", intentar extraer del título
+                if speaker in ["NA", "N/A", ""]:
+                    autor_del_titulo = extraer_autor_del_titulo(titulo_raw)
+                    if autor_del_titulo:
+                        speaker = autor_del_titulo
+                        print(f"      📝 Autor extraído del título: {speaker}")
+                    else:
+                        # Si no se puede extraer, mantener "NA" o "IMF Staff"
+                        if content_type == "Speech":
+                            speaker = "IMF Staff"
+
                 if not titulo_raw or not link or not raw_date:
                     continue
 
@@ -4375,13 +4408,8 @@ def load_discursos_fmi(start_date_str, end_date_str):
                     continue
 
                 if start_date <= parsed_date <= end_date:
-                    # Limpiar título usando el nombre del autor
                     titulo = limpiar_titulo(titulo_raw, speaker)
-                    
-                    # Construir título final
                     titulo_final = f"{speaker}: {titulo}"
-                    
-                    # Limpieza final
                     titulo_final = re.sub(r'\s+', ' ', titulo_final).strip()
                     
                     rows.append({
